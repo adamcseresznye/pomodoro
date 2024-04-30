@@ -1,4 +1,5 @@
 use crate::key_handler::*;
+use std::io::Write;
 
 use crossterm::{
     cursor::{Hide, RestorePosition, SavePosition},
@@ -12,48 +13,47 @@ use spin_sleep;
 use std::time::Duration;
 
 #[derive(PartialEq)]
-pub enum PomodoroState {
+pub enum PomodoroTask {
     Work,
     ShortBreak,
     LongBreak,
 }
 
-impl PomodoroState {
+impl PomodoroTask {
     pub fn duration(&self) -> u16 {
         match self {
-            PomodoroState::Work => 25 * 60,
-            PomodoroState::ShortBreak => 5 * 60,
-            PomodoroState::LongBreak => 15 * 60,
+            PomodoroTask::Work => 25 * 60,
+            PomodoroTask::ShortBreak => 5 * 60,
+            PomodoroTask::LongBreak => 15 * 60,
         }
     }
 
     fn emoji(&self) -> String {
         match self {
-            PomodoroState::Work => "✍️".to_string(),
-            PomodoroState::ShortBreak => "🧘".to_string(),
-            PomodoroState::LongBreak => "💆".to_string(),
+            PomodoroTask::Work => "✍️".to_string(),
+            PomodoroTask::ShortBreak => "🧘".to_string(),
+            PomodoroTask::LongBreak => "💆".to_string(),
         }
     }
 
     fn description(&self) -> String {
         match self {
-            PomodoroState::Work => "It's time to work".to_string(),
-            PomodoroState::ShortBreak => "It's time for a short break".to_string(),
-            PomodoroState::LongBreak => "It's time for a long break".to_string(),
+            PomodoroTask::Work => "It's time to work".to_string(),
+            PomodoroTask::ShortBreak => "It's time for a short break".to_string(),
+            PomodoroTask::LongBreak => "It's time for a long break".to_string(),
         }
     }
 
     fn color(&self) -> Color {
         match self {
-            PomodoroState::Work => Color::Red,
-            PomodoroState::ShortBreak => Color::Green,
-            PomodoroState::LongBreak => Color::Blue,
+            PomodoroTask::Work => Color::Red,
+            PomodoroTask::ShortBreak => Color::Green,
+            PomodoroTask::LongBreak => Color::Blue,
         }
     }
 }
 
-pub fn countdown(state: &PomodoroState) -> Option<KeyAction> {
-    let mut action = None;
+pub fn countdown(stdout: &mut impl Write, state: &PomodoroTask, is_paused: &mut bool) -> bool {
     for time in (1..=state.duration()).rev() {
         let countdown_message = format!(
             "{} {}  Time remaining: {}.",
@@ -61,19 +61,39 @@ pub fn countdown(state: &PomodoroState) -> Option<KeyAction> {
             &state.emoji(),
             convert_to_min(time)
         );
-        display(countdown_message, &state.color());
-        if let Some(key_action) = read_keystroke() {
-            action = Some(key_action);
-            break;
-        }
+        display(stdout, countdown_message, &state.color());
         spin_sleep::sleep(Duration::new(1, 0));
+
+        // Check for user input
+        if let Some(key_action) = read_keystroke() {
+            match key_action {
+                KeyAction::Pause => {
+                    *is_paused = true;
+                }
+                KeyAction::Resume => {
+                    *is_paused = false;
+                }
+                KeyAction::Quit => {
+                    return true;
+                }
+            }
+        }
+
+        // If the countdown is paused, enter a "wait" state
+        while *is_paused {
+            if let Some(key_action) = read_keystroke() {
+                if let KeyAction::Resume = key_action {
+                    *is_paused = false;
+                }
+            }
+        }
     }
-    action
+    return false;
 }
 
-fn display(message: String, color: &Color) {
+fn display(stdout: &mut impl Write, message: String, color: &Color) {
     execute!(
-        stdout(),
+        stdout,
         Hide,
         terminal::Clear(ClearType::CurrentLine),
         SavePosition,
@@ -94,18 +114,18 @@ pub fn print_empty_line() {
     execute!(stdout(), Print("\n"),).expect("Failed to execute");
 }
 
-pub fn change_state(state: &PomodoroState, rounds: u16) -> (PomodoroState, u16) {
+pub fn change_state(state: &PomodoroTask, rounds: u16) -> (PomodoroTask, u16) {
     let mut rounds = rounds;
     let new_state = match state {
-        PomodoroState::Work => {
+        PomodoroTask::Work => {
             rounds += 1;
             if rounds % 4 == 0 {
-                PomodoroState::LongBreak
+                PomodoroTask::LongBreak
             } else {
-                PomodoroState::ShortBreak
+                PomodoroTask::ShortBreak
             }
         }
-        PomodoroState::ShortBreak | PomodoroState::LongBreak => PomodoroState::Work,
+        PomodoroTask::ShortBreak | PomodoroTask::LongBreak => PomodoroTask::Work,
     };
     (new_state, rounds)
 }

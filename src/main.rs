@@ -6,30 +6,59 @@ use crate::event::*;
 use crate::key_handler::*;
 use crossterm::style::Stylize;
 use notification::*;
+use std::io::stdout;
 
 fn main() {
+    let mut stdout = stdout();
+
     let mut rounds = 0;
-    let mut state = PomodoroState::Work;
+    let mut task = PomodoroTask::Work;
 
     println!("{}", "🍅 Pomodoro App".bold());
-    println!("Press {} to quit.", "ESC".italic());
+    println!(
+        "Press {} to quit, {} to pause, and {} to resume.",
+        "ESC".italic(),
+        'p'.italic(),
+        'r'.italic()
+    );
+    let mut is_paused = false;
+
     loop {
-        if let Some(action) = countdown(&state) {
-            match action {
+        // Check for user input
+        if let Some(key_action) = read_keystroke() {
+            match key_action {
+                KeyAction::Pause => {
+                    is_paused = !is_paused;
+                }
                 KeyAction::Quit => {
-                    print_empty_line();
                     break;
                 }
+                _ => {}
             }
+        }
+
+        // If the application is paused, enter a "wait" state
+        while is_paused {
+            if let Some(key_action) = read_keystroke() {
+                if let KeyAction::Pause = key_action {
+                    is_paused = false;
+                }
+            }
+        }
+
+        // Normal operation of the application
+        if countdown(&mut stdout, &task, &mut is_paused) {
+            print_empty_line();
+            break;
         };
-        let (new_state, new_rounds) = change_state(&state, rounds);
-        state = new_state;
+        let (new_task, new_rounds) = change_state(&task, rounds);
+        task = new_task;
         rounds = new_rounds;
         play_notification_sound();
     }
     println!(
-        "🎉 Congratulations! \nYou completed {} pomodoros, {} min in total.",
+        "\n🎉 Congratulations! \nYou completed {} pomodoros, {:.0} min in total.",
         rounds,
-        PomodoroState::Work.duration() * rounds
+        ((PomodoroTask::Work.duration() * rounds) / 60) as f32
     );
 }
