@@ -62,10 +62,11 @@ pub fn countdown(stdout: &mut impl Write, state: &PomodoroTask, is_paused: &mut 
             convert_to_min(time)
         );
         display(stdout, countdown_message, &state.color());
-        spin_sleep::sleep(Duration::new(1, 0));
+        spin_sleep::sleep(Duration::new(0, 900_000_000)); //sleep for 0.9 sec
 
         // Check for user input
         if let Some(key_action) = read_keystroke() {
+            //read_keystroke polling for 0.1 sec
             match key_action {
                 KeyAction::Pause => {
                     *is_paused = true;

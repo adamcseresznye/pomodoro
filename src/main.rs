@@ -56,9 +56,24 @@ fn main() {
         rounds = new_rounds;
         play_notification_sound();
     }
-    println!(
-        "\n🎉 Congratulations! \nYou completed {} pomodoros, {:.0} min in total.",
-        rounds,
-        ((PomodoroTask::Work.duration() * rounds) / 60) as f32
-    );
+    match rounds {
+        rounds if rounds > 1 => {
+            println!(
+                "\n🎉 Congratulations! \nYou've successfully completed {} pomodoros, {:.0} minutes in total.",
+                rounds,
+                ((PomodoroTask::Work.duration() * rounds) / 60) as f32
+            );
+        }
+        rounds if rounds < 1 => {
+            println!(
+                "\nYou started a pomodoro, but it seems you haven't completed one yet. Keep going, you're doing great!"
+            );
+        }
+        _ => {
+            println!(
+                "\n🎉 Congratulations! \nYou've successfully completed {} pomodoro.",
+                rounds,
+            );
+        }
+    }
 }
