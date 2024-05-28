@@ -30,6 +30,7 @@ fn main() {
                 KeyAction::Pause => {
                     is_paused = !is_paused;
                 }
+
                 KeyAction::Quit => {
                     break;
                 }
@@ -51,11 +52,13 @@ fn main() {
             print_empty_line();
             break;
         };
+
         let (new_task, new_rounds) = change_state(&task, rounds);
         task = new_task;
         rounds = new_rounds;
         play_notification_sound();
     }
+
     match rounds {
         rounds if rounds > 1 => {
             println!(

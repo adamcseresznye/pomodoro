@@ -85,6 +85,9 @@ pub fn countdown(stdout: &mut impl Write, state: &PomodoroTask, is_paused: &mut 
             if let Some(key_action) = read_keystroke() {
                 if let KeyAction::Resume = key_action {
                     *is_paused = false;
+                    // If the ESC is pressed while , enter a "wait" state
+                } else if let KeyAction::Quit = key_action {
+                    return true;
                 }
             }
         }
