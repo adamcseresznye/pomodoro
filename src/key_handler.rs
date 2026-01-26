@@ -10,21 +10,20 @@ pub enum KeyAction {
 }
 
 pub fn read_keystroke() -> Option<KeyAction> {
-    if event::poll(Duration::from_millis(100)).expect("Poll failed") {
-        match event::read().expect("Read failed") {
-            Event::Key(key_event) => {
-                let action = match key_event.code {
+    match event::poll(Duration::from_millis(50)) {
+        Ok(true) => {
+            match event::read() {
+                Ok(Event::Key(key_event)) => match key_event.code {
                     Esc => Some(KeyAction::Quit),
                     Char('p') => Some(KeyAction::Pause),
                     Char('r') => Some(KeyAction::Resume),
                     _ => None,
-                };
-
-                action
+                },
+                Ok(_) => None,  // Non-key event
+                Err(_) => None, // Read error, ignore gracefully
             }
-            _ => None,
         }
-    } else {
-        None
+        Ok(false) => None, // No event within timeout
+        Err(_) => None,    // Poll error, ignore gracefully
     }
 }

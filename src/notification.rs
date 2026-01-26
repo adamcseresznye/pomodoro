@@ -1,22 +1,42 @@
-use rodio::{source::Source, Decoder, OutputStream};
+use once_cell::sync::Lazy;
+use rodio::{Decoder, OutputStream, Sink};
 use std::io::Cursor;
+use std::sync::mpsc;
 use std::thread;
-use std::time::Duration;
 
+// Single background audio thread that owns the OutputStream and handles play requests
+static AUDIO_TX: Lazy<mpsc::Sender<()>> = Lazy::new(|| {
+    let (tx, rx) = mpsc::channel::<()>();
+    thread::spawn(move || {
+        match OutputStream::try_default() {
+            Ok((stream, handle)) => {
+                let _stream = stream; // keep stream alive in this thread
+                while let Ok(_) = rx.recv() {
+                    let sound_data = include_bytes!("bell.mp3");
+                    let cursor = Cursor::new(sound_data);
+                    if let Ok(decoder) = Decoder::new(cursor) {
+                        if let Ok(sink) = Sink::try_new(&handle) {
+                            sink.append(decoder);
+                            sink.detach();
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!(
+                    "⚠️  Audio device not available: {}. Sounds will be muted.",
+                    e
+                );
+                // Drain requests to avoid blocking if no device
+                while rx.recv().is_ok() {}
+            }
+        }
+    });
+    tx
+});
+
+/// Request the audio thread to play the notification sound
 pub fn play_notification_sound() {
-    // Get a output stream handle to the default physical sound device
-    let (_stream, stream_handle) = OutputStream::try_default().unwrap();
-    // Decode that sound file into a source
-    let sound_data = include_bytes!("bell.mp3");
-    let cursor = Cursor::new(sound_data);
-    let source = Decoder::new(cursor).unwrap();
-    // Play the sound directly on the device
-    match stream_handle.play_raw(source.convert_samples()) {
-        Ok(_) => {}
-        Err(er) => eprintln!("Could not convert audio due to {}", er),
-    }
-
-    // The sound plays in a separate audio thread,
-    // so we need to keep the main thread alive while it's playing.
-    thread::sleep(Duration::from_secs(1));
+    // Ignore send errors silently (e.g., thread exited)
+    let _ = AUDIO_TX.send(());
 }

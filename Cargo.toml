@@ -1,14 +1,17 @@
 [package]
 name = "pomodoro"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-spin_sleep = "=1.2.0"
 crossterm = "0.27.0"
 rodio = "0.17.3"
+figlet-rs = "0.1.5"
+unicode-width = "0.1"
+once_cell = "1.19"
+cfonts = "1.3.0"
 
 [profile.release]
 opt-level = 'z'     # Optimize for size

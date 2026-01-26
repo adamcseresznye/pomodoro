@@ -3,7 +3,6 @@ mod key_handler;
 mod notification;
 
 use crate::event::*;
-use crate::key_handler::*;
 use crossterm::style::Stylize;
 use notification::*;
 use std::io::stdout;
@@ -14,41 +13,23 @@ fn main() {
     let mut rounds = 0;
     let mut task = PomodoroTask::Work;
 
-    println!("{}", "🍅 Pomodoro App".bold());
+    // Brief instruction message above the clock box
     println!(
-        "Press {} to quit, {} to pause, and {} to resume.",
+        "Controls: {} quit | {} pause | {} resume\n",
         "ESC".italic(),
-        'p'.italic(),
-        'r'.italic()
+        "p".italic(),
+        "r".italic()
     );
+
+    // Initialize display area for ASCII clock
+    init_display(&mut stdout);
+
     let mut is_paused = false;
 
     loop {
-        // Check for user input
-        if let Some(key_action) = read_keystroke() {
-            match key_action {
-                KeyAction::Pause => {
-                    is_paused = !is_paused;
-                }
-
-                KeyAction::Quit => {
-                    break;
-                }
-                _ => {}
-            }
-        }
-
-        // If the application is paused, enter a "wait" state
-        while is_paused {
-            if let Some(key_action) = read_keystroke() {
-                if let KeyAction::Pause = key_action {
-                    is_paused = false;
-                }
-            }
-        }
-
         // Normal operation of the application
         if countdown(&mut stdout, &task, &mut is_paused) {
+            cleanup_display(&mut stdout);
             print_empty_line();
             break;
         };
@@ -58,6 +39,9 @@ fn main() {
         rounds = new_rounds;
         play_notification_sound();
     }
+
+    // Ensure cursor is restored on normal exit
+    cleanup_display(&mut stdout);
 
     match rounds {
         rounds if rounds > 1 => {
