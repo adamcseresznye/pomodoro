@@ -1,0 +1,52 @@
+[
+  {
+    "file": "rain.ogg",
+    "title": "Summer Rain on Terrace",
+    "author": "Joseph SARDIN",
+    "source": "https://bigsoundbank.com/summer-rain-on-terrace-s1019.html",
+    "license": "CC0 1.0",
+    "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+    "changes": "Trimmed to at most 60 seconds, resampled to 24 kHz stereo, high-pass filtered and loudness matched. Non-thunder playback applies a two-second loop crossfade; thunder is tapered and separated by a quiet interval.",
+    "sha256": "440d3e59e002a9d1a27e4b0f2d8ad291713cb9a99dada2e83144c7473987aff4"
+  },
+  {
+    "file": "thunder.ogg",
+    "title": "Thunder #4",
+    "author": "Joseph SARDIN & Axeline T.",
+    "source": "https://bigsoundbank.com/thunder-4-s3115.html",
+    "license": "CC0 1.0",
+    "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+    "changes": "Trimmed to at most 60 seconds, resampled to 24 kHz stereo, high-pass filtered and loudness matched. Non-thunder playback applies a two-second loop crossfade; thunder is tapered and separated by a quiet interval.",
+    "sha256": "3e0ef0196e2490397ffe54a213f1d33911ad1913ab1efd4f45e4afb2c6b3abbc"
+  },
+  {
+    "file": "birds.ogg",
+    "title": "Birds waking #2",
+    "author": "Joseph SARDIN",
+    "source": "https://bigsoundbank.com/wake-birds-2-s0935.html",
+    "license": "CC0 1.0",
+    "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+    "changes": "Trimmed to at most 60 seconds, resampled to 24 kHz stereo, high-pass filtered and loudness matched. Non-thunder playback applies a two-second loop crossfade; thunder is tapered and separated by a quiet interval.",
+    "sha256": "e2df5e4a804ba5bdd918c9b41e121e3af4a21edea84abe062360014b6d17c197"
+  },
+  {
+    "file": "ocean.ogg",
+    "title": "Sea: Waves",
+    "author": "DenisChardonnet",
+    "source": "https://bigsoundbank.com/sea-waves-s0266.html",
+    "license": "CC0 1.0",
+    "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+    "changes": "Trimmed to at most 60 seconds, resampled to 24 kHz stereo, high-pass filtered and loudness matched. Non-thunder playback applies a two-second loop crossfade; thunder is tapered and separated by a quiet interval.",
+    "sha256": "14b28f8ed7fce0c2127bf1912ddea7b94b918ce343d0bec85d42f428d01baed8"
+  },
+  {
+    "file": "rainforest.ogg",
+    "title": "Jungle Sound Thailand Phuket",
+    "author": "Amada44",
+    "source": "https://commons.wikimedia.org/wiki/File:Jungle_Sound_Thailand_Phuket.flac",
+    "license": "CC BY-SA 3.0",
+    "license_url": "https://creativecommons.org/licenses/by-sa/3.0/",
+    "changes": "Trimmed to at most 60 seconds, resampled to 24 kHz stereo, high-pass filtered and loudness matched. Non-thunder playback applies a two-second loop crossfade; thunder is tapered and separated by a quiet interval.",
+    "sha256": "ed0a69c045021d56372b50e56acc1c896608ed8e874e2a94074f45d8619a5a5f"
+  }
+]
