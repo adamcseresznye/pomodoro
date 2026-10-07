@@ -59,6 +59,19 @@ A finished session shows totals and offers a new session. Timing continues
 while the desktop window is minimized. Sound and desktop notifications mark
 phase changes. Skipped phases do not add to completed-session totals.
 
+## Make it your space
+
+Use **Appearance** for dark mode, custom colors, gradients, and grain, linen, or
+dot textures. Background colors adjust for readable text. **Atmospheres** pairs
+backgrounds with sound mixes: try Rainy evening, Forest morning, or Ocean calm,
+or name and save your own. Save with the same name to update an atmosphere.
+
+Add a session intention before starting. **Focus view** keeps the clock,
+intention, and essential controls visible; **Show everything** restores settings.
+Daily totals show completed focus sessions and minutes, saved across launches
+and grouped by your computer's local date. Skips do not count. Audio eases in
+and out over two seconds when playback or the mix changes.
+
 ## Keyboard shortcuts
 
 | Key | Action |

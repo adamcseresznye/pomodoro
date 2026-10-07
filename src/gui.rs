@@ -12,10 +12,7 @@ use eframe::egui::{self, Color32, FontId, RichText, Stroke, Vec2};
 use std::time::{Duration, Instant};
 
 const BACKGROUND: Color32 = Color32::from_rgb(231, 239, 245);
-const INK: Color32 = Color32::from_rgb(36, 59, 77);
-const QUIET: Color32 = Color32::from_rgb(92, 116, 133);
 const BLUE: Color32 = Color32::from_rgb(62, 114, 158);
-const PAPER: Color32 = Color32::from_rgb(248, 251, 253);
 
 pub fn run(cfg: Config) -> eframe::Result {
     let preferences = Preferences::load(&soundscape::preferences_path());
@@ -44,6 +41,16 @@ pub fn run(cfg: Config) -> eframe::Result {
 }
 
 struct Desktop {
+    appearance: crate::appearance::Appearance,
+    appearance_open: bool,
+    experience: crate::experience::Experience,
+    atmospheres_open: bool,
+    atmosphere_name: String,
+    recorded_sessions: u64,
+    recorded_seconds: u64,
+    fade_from: [f32; soundscape::COUNT],
+    fade_target: [f32; soundscape::COUNT],
+    fade_started: Instant,
     timer: App,
     settings: Config,
     last_tick: Instant,
@@ -57,10 +64,19 @@ struct Desktop {
 
 impl Desktop {
     fn new(ctx: &egui::Context, cfg: Config, prefs: Preferences) -> Self {
-        ctx.set_theme(egui::Theme::Light);
-        let mut style = (*ctx.style_of(egui::Theme::Light)).clone();
-        style.visuals = egui::Visuals::light();
-        style.visuals.override_text_color = Some(INK);
+        let theme = if prefs.appearance.dark {
+            egui::Theme::Dark
+        } else {
+            egui::Theme::Light
+        };
+        ctx.set_theme(theme);
+        let mut style = (*ctx.style_of(theme)).clone();
+        style.visuals = if prefs.appearance.dark {
+            egui::Visuals::dark()
+        } else {
+            egui::Visuals::light()
+        };
+        style.visuals.override_text_color = Some(prefs.appearance.ink());
         style.visuals.panel_fill = BACKGROUND;
         style.visuals.widgets.active.bg_fill = BLUE;
         style.visuals.selection.bg_fill = BLUE;
@@ -74,6 +90,16 @@ impl Desktop {
             .insert(egui::TextStyle::Button, FontId::proportional(16.0));
         ctx.set_global_style(style);
         Self {
+            appearance: prefs.appearance,
+            appearance_open: false,
+            experience: prefs.experience,
+            atmospheres_open: false,
+            atmosphere_name: String::new(),
+            recorded_sessions: 0,
+            recorded_seconds: 0,
+            fade_from: [0.; soundscape::COUNT],
+            fade_target: [0.; soundscape::COUNT],
+            fade_started: Instant::now(),
             settings: cfg.clone(),
             timer: App::new(cfg),
             last_tick: Instant::now(),
@@ -139,9 +165,19 @@ impl Desktop {
                 } else {
                     "One thing at a time."
                 })
-                .color(QUIET),
+                .color(self.appearance.quiet()),
             );
             ui.add_space(10.0);
+            if startup && !self.experience.focus_view {
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.experience.intention)
+                        .hint_text("What are you focusing on?")
+                        .desired_width(300.0)
+                        .char_limit(120),
+                );
+            } else if !self.experience.intention.trim().is_empty() {
+                ui.label(RichText::new(&self.experience.intention).size(18.0));
+            }
             let side = ui.available_width().min(240.0);
             let (rect, _) = ui.allocate_exact_size(Vec2::splat(side), egui::Sense::hover());
             let center = rect.center();
@@ -172,7 +208,7 @@ impl Desktop {
                     fmt_mmss(self.timer.remaining_secs())
                 },
                 FontId::monospace((side * 0.23).min(56.0)),
-                INK,
+                self.appearance.ink(),
             );
             ui.painter().text(
                 center + Vec2::new(0.0, 38.0),
@@ -183,7 +219,7 @@ impl Desktop {
                     "remaining"
                 },
                 FontId::proportional(14.0),
-                QUIET,
+                self.appearance.quiet(),
             );
             ui.add_space(8.0);
             let primary = if summary {
@@ -206,6 +242,9 @@ impl Desktop {
             {
                 if summary {
                     self.settings.muted = notification::is_muted();
+                    self.record_progress();
+                    self.recorded_sessions = 0;
+                    self.recorded_seconds = 0;
                     self.timer = App::new(self.settings.clone());
                 } else {
                     if startup {
@@ -215,12 +254,12 @@ impl Desktop {
                     self.timer.handle_action(KeyAction::Confirm);
                 }
             }
-            if !startup && !summary {
+            if !startup && !summary && !self.experience.focus_view {
                 let labels = ["Skip", "Restart phase", "End session"];
                 let font = egui::TextStyle::Button.resolve(ui.style());
                 let widths = labels.map(|label| {
                     ui.painter()
-                        .layout_no_wrap(label.into(), font.clone(), INK)
+                        .layout_no_wrap(label.into(), font.clone(), self.appearance.ink())
                         .size()
                         .x
                         + ui.spacing().button_padding.x * 2.0
@@ -259,27 +298,32 @@ impl Desktop {
                     (self.timer.stats().work_completed + 1).min(self.timer.config().cycles),
                     self.timer.config().cycles
                 ))
-                .color(QUIET),
+                .color(self.appearance.quiet()),
             );
-            ui.label(format!(
-                "{} focus completed",
-                fmt_total_minutes(self.timer.stats().focus_secs)
-            ));
-            ui.label(format!(
-                "{} break completed",
-                fmt_total_minutes(self.timer.stats().break_secs)
-            ));
+            if !self.experience.focus_view || summary {
+                ui.label(format!(
+                    "{} focus completed",
+                    fmt_total_minutes(self.timer.stats().focus_secs)
+                ));
+                ui.label(format!(
+                    "{} break completed",
+                    fmt_total_minutes(self.timer.stats().break_secs)
+                ));
+            }
         });
+        if self.experience.focus_view {
+            return;
+        }
         ui.add_space(12.0);
         egui::CollapsingHeader::new("Session settings")
             .default_open(true)
             .show(ui, |ui| {
                 ui.spacing_mut().item_spacing.y = 4.0;
-                if !startup && !summary {
+                if !startup && !summary && !self.experience.focus_view {
                     ui.label(
                         RichText::new("Changes apply to your next session.")
                             .size(13.0)
-                            .color(QUIET),
+                            .color(self.appearance.quiet()),
                     );
                 }
                 ui.add(
@@ -309,7 +353,9 @@ impl Desktop {
             .insert(egui::TextStyle::Button, FontId::proportional(14.0));
         let audio_ready = self.audio.message().starts_with("Ready");
         ui.label(RichText::new("Your soundscape").size(26.0));
-        ui.label(RichText::new("Start with a preset. Make it your own.").color(QUIET));
+        ui.label(
+            RichText::new("Start with a preset. Make it your own.").color(self.appearance.quiet()),
+        );
         ui.add_space(10.0);
         ui.horizontal_wrapped(|ui| {
             for (index, (name, _)) in PRESETS.iter().enumerate() {
@@ -326,7 +372,7 @@ impl Desktop {
         });
         ui.add_space(8.0);
         egui::Frame::new()
-            .fill(PAPER)
+            .fill(self.appearance.paper())
             .corner_radius(12.0)
             .inner_margin(16.0)
             .show(ui, |ui| {
@@ -375,7 +421,7 @@ impl Desktop {
                         "Ready for your next focus session"
                     })
                     .size(13.0)
-                    .color(QUIET),
+                    .color(self.appearance.quiet()),
                 );
                 ui.add_space(6.0);
                 for index in 0..soundscape::COUNT {
@@ -419,10 +465,14 @@ impl Desktop {
         ui.label(
             RichText::new("Alpha tones: use stereo headphones for the two separate tones.")
                 .size(12.0)
-                .color(QUIET),
+                .color(self.appearance.quiet()),
         );
         let status = self.audio.message();
-        ui.label(RichText::new(status).size(12.0).color(QUIET));
+        ui.label(
+            RichText::new(status)
+                .size(12.0)
+                .color(self.appearance.quiet()),
+        );
         if let Some(error) = &self.save_error {
             ui.colored_label(Color32::DARK_RED, error);
         }
@@ -439,17 +489,48 @@ impl Desktop {
     fn render(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
         let before = (
+            self.experience.clone(),
+            self.appearance.clone(),
             self.sound.clone(),
             self.settings.clone(),
             notification::is_muted(),
         );
         self.shortcuts(&ctx);
+        let mut visuals = if self.appearance.dark {
+            egui::Visuals::dark()
+        } else {
+            egui::Visuals::light()
+        };
+        visuals.override_text_color = Some(self.appearance.ink());
+        visuals.widgets.active.bg_fill = BLUE;
+        visuals.selection.bg_fill = BLUE;
+        *ui.visuals_mut() = visuals.clone();
+        ctx.set_visuals(visuals);
         egui::CentralPanel::default()
-            .frame(egui::Frame::new().fill(BACKGROUND).inner_margin(24.0))
+            .frame(egui::Frame::new().inner_margin(24.0))
             .show(ui, |ui| {
+                self.appearance
+                    .paint(ui.painter(), ui.max_rect().expand(24.0));
                 ui.horizontal(|ui| {
+                    ui.spacing_mut().button_padding = Vec2::new(8.0, 8.0);
                     ui.label(RichText::new("Pomodoro").size(30.0).strong());
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui
+                            .button(if self.experience.focus_view {
+                                "Show everything"
+                            } else {
+                                "Focus view"
+                            })
+                            .clicked()
+                        {
+                            self.experience.focus_view = !self.experience.focus_view;
+                        }
+                        if !self.experience.focus_view && ui.button("Atmospheres").clicked() {
+                            self.atmospheres_open = !self.atmospheres_open;
+                        }
+                        if !self.experience.focus_view && ui.button("Appearance").clicked() {
+                            self.appearance_open = !self.appearance_open;
+                        }
                         if ui
                             .button(if notification::is_muted() {
                                 "Bell off"
@@ -464,7 +545,10 @@ impl Desktop {
                 });
                 ui.add_space(14.0);
                 egui::ScrollArea::vertical().show(ui, |ui| {
-                    if ui.available_width() >= 850.0 {
+                    if self.experience.focus_view {
+                        ui.add_space(36.0);
+                        self.timer_panel(ui);
+                    } else if ui.available_width() >= 850.0 {
                         ui.columns(2, |columns| {
                             columns[0].set_max_width(380.0);
                             self.timer_panel(&mut columns[0]);
@@ -477,16 +561,37 @@ impl Desktop {
                     }
                     ui.add_space(18.0);
                     ui.separator();
+                    if !self.experience.focus_view {
+                        let day = self
+                            .experience
+                            .days
+                            .get(&crate::experience::today())
+                            .cloned()
+                            .unwrap_or_default();
+                        ui.label(format!(
+                            "Today: {} sessions completed | {} completed focus minutes",
+                            day.sessions,
+                            day.focus_secs / 60
+                        ));
+                    }
                     ui.label(
                         RichText::new("Space: pause / resume    S: skip    X: restart    M: bell")
                             .size(12.0)
-                            .color(QUIET),
+                            .color(self.appearance.quiet()),
                     );
                 });
             });
+        egui::Window::new("Appearance")
+            .open(&mut self.appearance_open)
+            .resizable(false)
+            .show(&ctx, |ui| self.appearance.controls(ui));
+        self.atmospheres_window(&ctx);
+        self.record_progress();
         self.sync_audio();
         if before
             != (
+                self.experience.clone(),
+                self.appearance.clone(),
                 self.sound.clone(),
                 self.settings.clone(),
                 notification::is_muted(),
@@ -543,15 +648,106 @@ impl Desktop {
             }
             None => self.sound.gains(active, None),
         };
-        self.audio.update(gains);
+        let now = Instant::now();
+        let current = fade_values(
+            self.fade_from,
+            self.fade_target,
+            now.duration_since(self.fade_started).as_secs_f32(),
+        );
+        if gains != self.fade_target {
+            self.fade_from = current;
+            self.fade_target = gains;
+            self.fade_started = now;
+        }
+        self.audio.update(current);
+    }
+    fn record_progress(&mut self) {
+        let stats = self.timer.stats();
+        let sessions = stats.work_completed.saturating_sub(self.recorded_sessions);
+        let seconds = stats.focus_secs.saturating_sub(self.recorded_seconds);
+        self.recorded_sessions = stats.work_completed;
+        self.recorded_seconds = stats.focus_secs;
+        if sessions > 0 || seconds > 0 {
+            self.experience
+                .record(crate::experience::today(), sessions, seconds);
+            self.save_at = Some(Instant::now() + Duration::from_millis(700));
+        }
+    }
+    fn atmospheres_window(&mut self, ctx: &egui::Context) {
+        egui::Window::new("Atmospheres")
+            .open(&mut self.atmospheres_open)
+            .default_width(360.0)
+            .resizable(false)
+            .show(ctx, |ui| {
+                ui.label("Your background and sound mix, together.");
+                let mut remove = None;
+                egui::ScrollArea::vertical()
+                    .max_height(260.0)
+                    .show(ui, |ui| {
+                        for (index, atmosphere) in self.experience.atmospheres.iter().enumerate() {
+                            ui.horizontal(|ui| {
+                                if ui.button(&atmosphere.name).clicked() {
+                                    self.appearance = atmosphere.appearance.clone();
+                                    self.sound = atmosphere.sound.clone();
+                                    self.preview = None;
+                                }
+                                if ui.small_button("Delete").clicked() {
+                                    remove = Some(index);
+                                }
+                            });
+                        }
+                    });
+                if let Some(index) = remove {
+                    self.experience.atmospheres.remove(index);
+                }
+                ui.separator();
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.atmosphere_name)
+                        .hint_text("Name your atmosphere")
+                        .char_limit(60),
+                );
+                let name = self.atmosphere_name.trim().to_owned();
+                let exists = self.experience.atmospheres.iter().any(|a| a.name == name);
+                if ui
+                    .add_enabled(
+                        !name.is_empty(),
+                        egui::Button::new(if exists {
+                            "Update saved atmosphere"
+                        } else {
+                            "Save current atmosphere"
+                        }),
+                    )
+                    .clicked()
+                {
+                    let atmosphere = crate::experience::Atmosphere {
+                        name: name.clone(),
+                        appearance: self.appearance.clone(),
+                        sound: self.sound.clone(),
+                    };
+                    if let Some(existing) = self
+                        .experience
+                        .atmospheres
+                        .iter_mut()
+                        .find(|a| a.name == name)
+                    {
+                        *existing = atmosphere;
+                    } else {
+                        self.experience.atmospheres.push(atmosphere);
+                    }
+                    self.atmosphere_name.clear();
+                }
+            });
     }
     fn save_preferences(&mut self) {
+        self.record_progress();
         let mut session = self.settings.clone();
         session.muted = notification::is_muted();
         let prefs = Preferences {
             version: 1,
             session,
             sound: self.sound.clone(),
+            appearance: self.appearance.clone(),
+            experience: self.experience.clone(),
         };
         self.save_error = prefs
             .save(&soundscape::preferences_path())
@@ -568,6 +764,7 @@ impl eframe::App for Desktop {
             self.timer.update();
             self.last_tick = Instant::now();
         }
+        self.record_progress();
         self.sync_audio();
         if self
             .save_at
@@ -590,6 +787,16 @@ impl eframe::App for Desktop {
     }
 }
 
+fn fade_values(
+    from: [f32; soundscape::COUNT],
+    target: [f32; soundscape::COUNT],
+    elapsed: f32,
+) -> [f32; soundscape::COUNT] {
+    let t = (elapsed / 2.0).clamp(0., 1.);
+    let t = t * t * (3. - 2. * t);
+    std::array::from_fn(|i| from[i] + (target[i] - from[i]) * t)
+}
+
 fn percent(value: f64, _: std::ops::RangeInclusive<usize>) -> String {
     format!("{:.0}%", value * 100.0)
 }
@@ -598,6 +805,40 @@ fn percent(value: f64, _: std::ops::RangeInclusive<usize>) -> String {
 mod tests {
     use super::*;
 
+    #[test]
+    fn audio_fades_are_bounded_and_can_reverse_without_jumping() {
+        let zero = [0.; soundscape::COUNT];
+        let full = [1.; soundscape::COUNT];
+        assert_eq!(fade_values(zero, full, 0.), zero);
+        assert_eq!(fade_values(zero, full, 2.), full);
+        let halfway = fade_values(zero, full, 1.);
+        assert_eq!(halfway, [0.5; soundscape::COUNT]);
+        assert_eq!(fade_values(halfway, zero, 0.), halfway);
+        assert_eq!(fade_values(halfway, zero, 2.), zero);
+    }
+    #[test]
+    fn focus_view_and_atmospheres_render_at_both_sizes() {
+        for width in [640., 1080.] {
+            let ctx = egui::Context::default();
+            let mut desktop = Desktop::new(&ctx, Config::default(), Preferences::default());
+            desktop.experience.focus_view = true;
+            desktop.experience.intention = "Write the next paragraph".into();
+            desktop.atmospheres_open = true;
+            for _ in 0..2 {
+                let output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            Vec2::new(width, 800.),
+                        )),
+                        ..Default::default()
+                    },
+                    |ui| desktop.render(ui),
+                );
+                assert!(!output.shapes.is_empty());
+            }
+        }
+    }
     #[test]
     fn desktop_controls_share_timer_state() {
         let ctx = egui::Context::default();
@@ -616,9 +857,13 @@ mod tests {
 
     #[test]
     fn mixer_renders_all_layers_at_desktop_and_compact_sizes() {
-        for (width, height) in [(1080.0, 800.0), (640.0, 560.0)] {
+        for (width, height, dark) in [(1080.0, 800.0, false), (640.0, 560.0, true)] {
             let ctx = egui::Context::default();
             let mut desktop = Desktop::new(&ctx, Config::default(), Preferences::default());
+            desktop.appearance.dark = dark;
+            desktop.appearance.background = crate::appearance::Background::Gradient;
+            desktop.appearance.texture = crate::appearance::Texture::Grain;
+            desktop.appearance_open = true;
             let output = ctx.run_ui(
                 egui::RawInput {
                     screen_rect: Some(egui::Rect::from_min_size(

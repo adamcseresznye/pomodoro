@@ -1,8 +1,10 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod app;
+mod appearance;
 mod config;
 mod event;
+mod experience;
 mod gui;
 mod key_handler;
 mod notification;

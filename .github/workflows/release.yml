@@ -62,13 +62,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          @'
-          Pomodoro Soundscapes brings an egui desktop timer and an offline mixer with rain, thunder, rainforest, birds, ocean, pink noise, brown noise and alpha tones.
-
-          This release includes centered timer controls, louder soundscapes, a new app icon and session settings that remain accessible beneath the clock.
-
-          Download pomodoro-soundscapes-windows-x64.exe and open it on Windows. Audio is bundled in the executable. SHA256SUMS.txt contains the executable checksum.
-          '@ | Set-Content -LiteralPath release-notes.md -Encoding utf8NoBOM
+          Get-Content -LiteralPath RELEASE_NOTES.md -Raw | Set-Content -LiteralPath release-notes.md -Encoding utf8NoBOM
           gh release view $env:RELEASE_TAG *> $null
           if ($LASTEXITCODE -ne 0) {
             gh release create $env:RELEASE_TAG --verify-tag --title "Pomodoro Soundscapes $env:RELEASE_TAG" --notes-file release-notes.md

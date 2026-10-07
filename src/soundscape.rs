@@ -113,6 +113,8 @@ pub struct Preferences {
     pub version: u32,
     pub session: Config,
     pub sound: Settings,
+    pub appearance: crate::appearance::Appearance,
+    pub experience: crate::experience::Experience,
 }
 impl Default for Preferences {
     fn default() -> Self {
@@ -120,12 +122,17 @@ impl Default for Preferences {
             version: 1,
             session: Config::default(),
             sound: Settings::default(),
+            appearance: crate::appearance::Appearance::default(),
+            experience: crate::experience::Experience::default(),
         }
     }
 }
 impl Preferences {
     pub fn sanitize(&mut self) {
         self.sound.sanitize();
+        for atmosphere in &mut self.experience.atmospheres {
+            atmosphere.sound.sanitize();
+        }
         self.session.work_mins = self.session.work_mins.clamp(1, 180);
         self.session.short_mins = self.session.short_mins.clamp(1, 180);
         self.session.long_mins = self.session.long_mins.clamp(1, 180);
