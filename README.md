@@ -1,10 +1,10 @@
-<img src="assets/app-icon.png" alt="Pomodoro Soundscapes icon" width="80">
-
 # Pomodoro Soundscapes
 
 A Rust desktop timer built with egui and eframe. A clear countdown, clickable
 controls, and an offline soundscape mixer help you set your atmosphere.
 The original terminal interface is also available.
+
+![Pomodoro desktop app with the focus timer, session settings and soundscape mixer](assets/screenshot.png)
 
 - Focus, short-break and long-break timers with a progress ring and centered controls.
 - Eight sounds to combine: rain, thunder, rainforest, birds, ocean, pink noise,
@@ -13,6 +13,12 @@ The original terminal interface is also available.
 - Session settings beneath the clock, available before and during a session.
 - Saved preferences, keyboard shortcuts and optional desktop notifications.
 - Offline playback with bundled recordings and generated noise and tones.
+
+## Download
+
+Download **pomodoro-soundscapes-windows-x64.exe** from the
+[latest release](https://github.com/adamcseresznye/pomodoro/releases/latest)
+and open it on Windows. No installation or separate audio files are needed.
 
 ## Build requirements
 
@@ -116,3 +122,11 @@ Rain, thunder, birds and ocean recordings: BigSoundBank, CC0 1.0.
 Rainforest: Jungle Sound Thailand Phuket by Amada44, CC BY-SA 3.0.
 See [audio licenses](assets/sounds/LICENSES.md) and [exact sources](assets/sounds/sources.json).
 Noise and tones are generated directly by the app.
+
+## Releases
+
+The [Windows release workflow](.github/workflows/release.yml) runs when a
+version tag such as `v0.4.0` is pushed. It checks formatting, runs tests, builds
+the Windows executable and publishes it with a SHA-256 checksum on the GitHub
+release page. The tagged source remains available alongside the executable.
+The workflow can also be run manually to produce a downloadable build artifact.
