@@ -74,6 +74,13 @@ impl App {
     pub fn config(&self) -> &Config {
         &self.cfg
     }
+
+    /// Desktop sessions wait for an explicit start, even with automatic transitions.
+    pub fn new_waiting(cfg: Config) -> Self {
+        let mut app = Self::new(cfg);
+        app.screen = Screen::Startup;
+        app
+    }
     pub fn phase(&self) -> PomodoroTask {
         self.task
     }

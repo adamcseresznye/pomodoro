@@ -29,7 +29,7 @@ pub fn run(cfg: Config) -> eframe::Result {
                 eframe::icon_data::from_png_bytes(include_bytes!("../assets/app-icon.png"))
                     .expect("bundled application icon"),
             )
-            .with_inner_size([1080.0, 800.0])
+            .with_inner_size([920.0, 700.0])
             .with_min_inner_size([640.0, 560.0]),
         ..Default::default()
     };
@@ -64,6 +64,30 @@ struct Desktop {
 
 impl Desktop {
     fn new(ctx: &egui::Context, cfg: Config, prefs: Preferences) -> Self {
+        let mut fonts = egui::FontDefinitions::default();
+        fonts.font_data.insert(
+            "Manrope".into(),
+            egui::FontData::from_static(include_bytes!("../assets/fonts/Manrope-Regular.ttf"))
+                .into(),
+        );
+        fonts.font_data.insert(
+            "Manrope Tabular".into(),
+            egui::FontData::from_static(include_bytes!("../assets/fonts/Manrope-Tabular.ttf"))
+                .into(),
+        );
+        fonts
+            .families
+            .get_mut(&egui::FontFamily::Proportional)
+            .unwrap()
+            .insert(0, "Manrope".into());
+        // egui doesn't apply OpenType's tnum feature; this instance maps the
+        // countdown digits to Manrope's tabular glyphs before bundling.
+        let mut timer_fonts = fonts.families[&egui::FontFamily::Proportional].clone();
+        timer_fonts.insert(0, "Manrope Tabular".into());
+        fonts
+            .families
+            .insert(egui::FontFamily::Name("timer".into()), timer_fonts);
+        ctx.set_fonts(fonts);
         let theme = if prefs.appearance.dark {
             egui::Theme::Dark
         } else {
@@ -80,8 +104,8 @@ impl Desktop {
         style.visuals.panel_fill = BACKGROUND;
         style.visuals.widgets.active.bg_fill = BLUE;
         style.visuals.selection.bg_fill = BLUE;
-        style.spacing.item_spacing = Vec2::new(12.0, 10.0);
-        style.spacing.button_padding = Vec2::new(16.0, 10.0);
+        style.spacing.item_spacing = Vec2::new(10.0, 6.0);
+        style.spacing.button_padding = Vec2::new(10.0, 6.0);
         style
             .text_styles
             .insert(egui::TextStyle::Body, FontId::proportional(16.0));
@@ -101,7 +125,7 @@ impl Desktop {
             fade_target: [0.; soundscape::COUNT],
             fade_started: Instant::now(),
             settings: cfg.clone(),
-            timer: App::new(cfg),
+            timer: App::new_waiting(cfg),
             last_tick: Instant::now(),
             sound: prefs.sound,
             audio: {
@@ -153,8 +177,7 @@ impl Desktop {
         let summary = self.timer.is_summary();
         let startup = self.timer.is_startup();
         ui.vertical_centered(|ui| {
-            ui.add_space(8.0);
-            ui.label(RichText::new(if summary { "Session complete" } else { phase }).size(26.0));
+            ui.label(RichText::new(if summary { "Session complete" } else { phase }).size(23.0));
             ui.label(
                 RichText::new(if summary {
                     "Your time, well spent."
@@ -167,18 +190,18 @@ impl Desktop {
                 })
                 .color(self.appearance.quiet()),
             );
-            ui.add_space(10.0);
+            ui.add_space(4.0);
             if startup && !self.experience.focus_view {
                 ui.add(
                     egui::TextEdit::singleline(&mut self.experience.intention)
                         .hint_text("What are you focusing on?")
-                        .desired_width(300.0)
+                        .desired_width(ui.available_width() * 0.9)
                         .char_limit(120),
                 );
             } else if !self.experience.intention.trim().is_empty() {
                 ui.label(RichText::new(&self.experience.intention).size(18.0));
             }
-            let side = ui.available_width().min(240.0);
+            let side = timer_side(ui.available_width(), ui.ctx().content_rect().height());
             let (rect, _) = ui.allocate_exact_size(Vec2::splat(side), egui::Sense::hover());
             let center = rect.center();
             let radius = side * 0.45;
@@ -207,11 +230,11 @@ impl Desktop {
                 } else {
                     fmt_mmss(self.timer.remaining_secs())
                 },
-                FontId::monospace((side * 0.23).min(56.0)),
+                FontId::new(side * 0.23, egui::FontFamily::Name("timer".into())),
                 self.appearance.ink(),
             );
             ui.painter().text(
-                center + Vec2::new(0.0, 38.0),
+                center + Vec2::new(0.0, side * 0.18),
                 egui::Align2::CENTER_CENTER,
                 if summary {
                     "sessions finished"
@@ -235,7 +258,7 @@ impl Desktop {
             };
             if ui
                 .add_sized(
-                    [180.0, 44.0],
+                    [ui.available_width() * 0.6, 44.0],
                     egui::Button::new(RichText::new(primary).color(Color32::WHITE)).fill(BLUE),
                 )
                 .clicked()
@@ -245,7 +268,7 @@ impl Desktop {
                     self.record_progress();
                     self.recorded_sessions = 0;
                     self.recorded_seconds = 0;
-                    self.timer = App::new(self.settings.clone());
+                    self.timer = App::new_waiting(self.settings.clone());
                 } else {
                     if startup {
                         self.settings.muted = notification::is_muted();
@@ -291,7 +314,7 @@ impl Desktop {
             if let Some(message) = self.timer.transition_message() {
                 ui.label(message);
             }
-            ui.add_space(12.0);
+            ui.add_space(4.0);
             ui.label(
                 RichText::new(format!(
                     "Session {} of {}",
@@ -301,62 +324,111 @@ impl Desktop {
                 .color(self.appearance.quiet()),
             );
             if !self.experience.focus_view || summary {
-                ui.label(format!(
-                    "{} focus completed",
-                    fmt_total_minutes(self.timer.stats().focus_secs)
-                ));
-                ui.label(format!(
-                    "{} break completed",
-                    fmt_total_minutes(self.timer.stats().break_secs)
-                ));
+                ui.label(
+                    RichText::new(format!(
+                        "{} focus · {} break",
+                        fmt_total_minutes(self.timer.stats().focus_secs),
+                        fmt_total_minutes(self.timer.stats().break_secs)
+                    ))
+                    .size(14.0)
+                    .color(self.appearance.quiet()),
+                );
             }
         });
         if self.experience.focus_view {
             return;
         }
-        ui.add_space(12.0);
-        egui::CollapsingHeader::new("Session settings")
-            .default_open(true)
-            .show(ui, |ui| {
-                ui.spacing_mut().item_spacing.y = 4.0;
-                if !startup && !summary && !self.experience.focus_view {
-                    ui.label(
-                        RichText::new("Changes apply to your next session.")
-                            .size(13.0)
-                            .color(self.appearance.quiet()),
-                    );
-                }
-                ui.add(
-                    egui::Slider::new(&mut self.settings.work_mins, 1..=180).text("Focus minutes"),
-                );
-                ui.add(
-                    egui::Slider::new(&mut self.settings.short_mins, 1..=180).text("Short break"),
-                );
-                ui.add(egui::Slider::new(&mut self.settings.long_mins, 1..=180).text("Long break"));
-                ui.add(egui::Slider::new(&mut self.settings.cycles, 1..=12).text("Sessions"));
-                ui.checkbox(&mut self.settings.auto_start, "Start phases automatically");
-                ui.checkbox(&mut self.settings.desktop, "Desktop notifications");
-                // Only startup configuration changes the current timer.
-                self.settings.muted = notification::is_muted();
-                self.timer.configure(self.settings.clone());
-            });
+        ui.add_space(8.0);
+        let settings_width = ui.available_width();
+        ui.horizontal(|ui| {
+            ui.add_space(settings_width * 0.05);
+            ui.allocate_ui_with_layout(
+                Vec2::new(settings_width * 0.9, 0.0),
+                egui::Layout::top_down(egui::Align::Min),
+                |ui| {
+                    egui::CollapsingHeader::new("Session settings")
+                        .default_open(true)
+                        .show(ui, |ui| {
+                            ui.spacing_mut().item_spacing.y = 4.0;
+                            ui.style_mut()
+                                .text_styles
+                                .insert(egui::TextStyle::Body, FontId::proportional(14.0));
+                            ui.style_mut()
+                                .text_styles
+                                .insert(egui::TextStyle::Button, FontId::proportional(14.0));
+                            if !startup && !summary && !self.experience.focus_view {
+                                ui.label(
+                                    RichText::new("Changes apply to your next session.")
+                                        .size(13.0)
+                                        .color(self.appearance.quiet()),
+                                );
+                            }
+                            egui::Grid::new("session_lengths")
+                                .num_columns(4)
+                                .min_col_width(if settings_width > 480.0 {
+                                    (settings_width * 0.9 - 36.0) / 4.0
+                                } else {
+                                    0.0
+                                })
+                                .spacing([12.0, 6.0])
+                                .show(ui, |ui| {
+                                    ui.label("Focus");
+                                    ui.add(
+                                        egui::DragValue::new(&mut self.settings.work_mins)
+                                            .range(1..=180)
+                                            .suffix(" min"),
+                                    );
+                                    ui.label("Sessions");
+                                    ui.add(
+                                        egui::DragValue::new(&mut self.settings.cycles)
+                                            .range(1..=12),
+                                    );
+                                    ui.end_row();
+                                    ui.label("Short break");
+                                    ui.add(
+                                        egui::DragValue::new(&mut self.settings.short_mins)
+                                            .range(1..=180)
+                                            .suffix(" min"),
+                                    );
+                                    ui.label("Long break");
+                                    ui.add(
+                                        egui::DragValue::new(&mut self.settings.long_mins)
+                                            .range(1..=180)
+                                            .suffix(" min"),
+                                    );
+                                    ui.end_row();
+                                });
+                            ui.checkbox(
+                                &mut self.settings.auto_start,
+                                "Start phases automatically",
+                            );
+                            ui.checkbox(&mut self.settings.desktop, "Desktop notifications");
+                            // Only startup configuration changes the current timer.
+                            self.settings.muted = notification::is_muted();
+                            self.timer.configure(self.settings.clone());
+                        });
+                },
+            );
+        });
     }
 
     fn sound_panel(&mut self, ui: &mut egui::Ui) {
+        let roomy = ui.available_width() > 700.0;
+        let text_size = if roomy { 16.0 } else { 14.0 };
         ui.spacing_mut().item_spacing = Vec2::new(8.0, 4.0);
         ui.spacing_mut().button_padding = Vec2::new(8.0, 3.0);
         ui.style_mut()
             .text_styles
-            .insert(egui::TextStyle::Body, FontId::proportional(14.0));
+            .insert(egui::TextStyle::Body, FontId::proportional(text_size));
         ui.style_mut()
             .text_styles
-            .insert(egui::TextStyle::Button, FontId::proportional(14.0));
+            .insert(egui::TextStyle::Button, FontId::proportional(text_size));
         let audio_ready = self.audio.message().starts_with("Ready");
-        ui.label(RichText::new("Your soundscape").size(26.0));
+        ui.label(RichText::new("Your soundscape").size(23.0));
         ui.label(
             RichText::new("Start with a preset. Make it your own.").color(self.appearance.quiet()),
         );
-        ui.add_space(10.0);
+        ui.add_space(4.0);
         ui.horizontal_wrapped(|ui| {
             for (index, (name, _)) in PRESETS.iter().enumerate() {
                 if ui
@@ -374,9 +446,9 @@ impl Desktop {
         egui::Frame::new()
             .fill(self.appearance.paper())
             .corner_radius(12.0)
-            .inner_margin(16.0)
+            .inner_margin(12.0)
             .show(ui, |ui| {
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     if ui
                         .checkbox(&mut self.sound.enabled, "Soundscape on")
                         .changed()
@@ -424,19 +496,18 @@ impl Desktop {
                     .color(self.appearance.quiet()),
                 );
                 ui.add_space(6.0);
-                for index in 0..soundscape::COUNT {
-                    ui.separator();
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new(NAMES[index]).strong())
-                            .on_hover_text(DESCRIPTIONS[index]);
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui
-                                .add_enabled(audio_ready, egui::Button::new("Preview").small())
-                                .on_hover_text("Listen to this layer for 8 seconds")
-                                .clicked()
-                            {
-                                self.start_preview(Some(index));
-                            }
+                ui.separator();
+                ui.spacing_mut().slider_width =
+                    (ui.available_width() - if roomy { 270.0 } else { 220.0 }).max(100.0);
+                let row_spacing = (ui.ctx().content_rect().height() - 680.0).max(0.0) * 0.025 + 2.0;
+                egui::Grid::new("sound_layers")
+                    .num_columns(3)
+                    .spacing([12.0, row_spacing.min(18.0)])
+                    .min_row_height(22.0)
+                    .show(ui, |ui| {
+                        for index in 0..soundscape::COUNT {
+                            ui.label(RichText::new(NAMES[index]).strong())
+                                .on_hover_text(DESCRIPTIONS[index]);
                             if ui
                                 .add(
                                     egui::Slider::new(&mut self.sound.levels[index], 0.0..=1.0)
@@ -446,22 +517,22 @@ impl Desktop {
                             {
                                 self.sound.preset = None;
                             }
-                        });
+                            if ui
+                                .add_enabled(audio_ready, egui::Button::new("Preview").small())
+                                .on_hover_text("Listen to this layer for 8 seconds")
+                                .clicked()
+                            {
+                                self.start_preview(Some(index));
+                            }
+                            ui.end_row();
+                        }
                     });
-                }
             });
         ui.add_space(8.0);
         ui.checkbox(
             &mut self.sound.during_breaks,
             "Continue soundscape during breaks",
         );
-        let mut bell = !notification::is_muted();
-        if ui
-            .checkbox(&mut bell, "Play a bell when a phase ends")
-            .changed()
-        {
-            notification::set_muted(!bell);
-        }
         ui.label(
             RichText::new("Alpha tones: use stereo headphones for the two separate tones.")
                 .size(12.0)
@@ -506,14 +577,43 @@ impl Desktop {
         visuals.selection.bg_fill = BLUE;
         *ui.visuals_mut() = visuals.clone();
         ctx.set_visuals(visuals);
-        egui::CentralPanel::default()
-            .frame(egui::Frame::new().inner_margin(24.0))
+        egui::Panel::bottom("session_footer")
+            .frame(egui::Frame::new().inner_margin(egui::Margin::symmetric(16, 8)))
             .show(ui, |ui| {
                 self.appearance
-                    .paint(ui.painter(), ui.max_rect().expand(24.0));
-                ui.horizontal(|ui| {
+                    .paint(ui.painter(), ui.max_rect().expand(16.0));
+                ui.horizontal_wrapped(|ui| {
+                    if !self.experience.focus_view {
+                        let day = self
+                            .experience
+                            .days
+                            .get(&crate::experience::today())
+                            .cloned()
+                            .unwrap_or_default();
+                        ui.label(
+                            RichText::new(format!(
+                                "Today: {} sessions · {} focus minutes",
+                                day.sessions,
+                                day.focus_secs / 60
+                            ))
+                            .size(13.0),
+                        );
+                    }
+                    ui.label(
+                        RichText::new("Space: pause / resume    S: skip    X: restart    M: bell")
+                            .size(12.0)
+                            .color(self.appearance.quiet()),
+                    );
+                });
+            });
+        egui::CentralPanel::default()
+            .frame(egui::Frame::new().inner_margin(16.0))
+            .show(ui, |ui| {
+                self.appearance
+                    .paint(ui.painter(), ui.max_rect().expand(16.0));
+                ui.horizontal_wrapped(|ui| {
                     ui.spacing_mut().button_padding = Vec2::new(8.0, 8.0);
-                    ui.label(RichText::new("Pomodoro").size(30.0).strong());
+                    ui.label(RichText::new("Pomodoro").size(24.0).strong());
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui
                             .button(if self.experience.focus_view {
@@ -543,42 +643,35 @@ impl Desktop {
                         }
                     });
                 });
-                ui.add_space(14.0);
+                ui.add_space(8.0);
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     if self.experience.focus_view {
                         ui.add_space(36.0);
                         self.timer_panel(ui);
-                    } else if ui.available_width() >= 850.0 {
-                        ui.columns(2, |columns| {
-                            columns[0].set_max_width(380.0);
-                            self.timer_panel(&mut columns[0]);
-                            self.sound_panel(&mut columns[1]);
+                    } else if ui.available_width() >= 800.0 {
+                        let timer_width =
+                            (ui.available_width() - ui.spacing().item_spacing.x) * 0.4;
+                        ui.horizontal_top(|ui| {
+                            ui.allocate_ui_with_layout(
+                                Vec2::new(timer_width, 0.0),
+                                egui::Layout::top_down(egui::Align::Min),
+                                |ui| {
+                                    self.timer_panel(ui);
+                                },
+                            );
+                            ui.allocate_ui_with_layout(
+                                Vec2::new(ui.available_width(), 0.0),
+                                egui::Layout::top_down(egui::Align::Min),
+                                |ui| {
+                                    self.sound_panel(ui);
+                                },
+                            );
                         });
                     } else {
                         self.timer_panel(ui);
                         ui.add_space(24.0);
                         self.sound_panel(ui);
                     }
-                    ui.add_space(18.0);
-                    ui.separator();
-                    if !self.experience.focus_view {
-                        let day = self
-                            .experience
-                            .days
-                            .get(&crate::experience::today())
-                            .cloned()
-                            .unwrap_or_default();
-                        ui.label(format!(
-                            "Today: {} sessions completed | {} completed focus minutes",
-                            day.sessions,
-                            day.focus_secs / 60
-                        ));
-                    }
-                    ui.label(
-                        RichText::new("Space: pause / resume    S: skip    X: restart    M: bell")
-                            .size(12.0)
-                            .color(self.appearance.quiet()),
-                    );
                 });
             });
         egui::Window::new("Appearance")
@@ -797,6 +890,11 @@ fn fade_values(
     std::array::from_fn(|i| from[i] + (target[i] - from[i]) * t)
 }
 
+fn timer_side(width: f32, height: f32) -> f32 {
+    // Grow with both dimensions while retaining room for controls and settings.
+    (width * 0.7).min((height - 510.0).max(184.0))
+}
+
 fn percent(value: f64, _: std::ops::RangeInclusive<usize>) -> String {
     format!("{:.0}%", value * 100.0)
 }
@@ -804,6 +902,38 @@ fn percent(value: f64, _: std::ops::RangeInclusive<usize>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn desktop_waits_for_start_with_saved_automatic_transitions() {
+        let ctx = egui::Context::default();
+        let cfg = Config {
+            auto_start: true,
+            ..Config::default()
+        };
+        let prefs = Preferences {
+            session: cfg.clone(),
+            ..Preferences::default()
+        };
+        let mut desktop = Desktop::new(&ctx, cfg, prefs);
+        desktop.timer.update();
+        assert!(desktop.timer.is_startup());
+        assert!(!desktop.timer_active());
+        assert!(!desktop.playing());
+        assert_eq!(desktop.timer.remaining_secs(), 25 * 60);
+        assert!(desktop.timer.config().auto_start);
+        desktop.timer.handle_action(KeyAction::Confirm);
+        assert!(desktop.timer_active());
+        assert!(desktop.playing());
+    }
+
+    #[test]
+    fn timer_scales_with_window_without_exceeding_its_column() {
+        let compact = timer_side(350.0, 700.0);
+        let maximized = timer_side(750.0, 1080.0);
+        assert!(maximized > compact * 2.0);
+        assert!(timer_side(200.0, 700.0) <= 200.0);
+        assert!(timer_side(750.0, 600.0) < compact);
+    }
 
     #[test]
     fn audio_fades_are_bounded_and_can_reverse_without_jumping() {
@@ -818,7 +948,7 @@ mod tests {
     }
     #[test]
     fn focus_view_and_atmospheres_render_at_both_sizes() {
-        for width in [640., 1080.] {
+        for width in [640., 920., 1080., 1920.] {
             let ctx = egui::Context::default();
             let mut desktop = Desktop::new(&ctx, Config::default(), Preferences::default());
             desktop.experience.focus_view = true;
@@ -857,7 +987,11 @@ mod tests {
 
     #[test]
     fn mixer_renders_all_layers_at_desktop_and_compact_sizes() {
-        for (width, height, dark) in [(1080.0, 800.0, false), (640.0, 560.0, true)] {
+        for (width, height, dark) in [
+            (920.0, 700.0, false),
+            (1080.0, 800.0, false),
+            (640.0, 560.0, true),
+        ] {
             let ctx = egui::Context::default();
             let mut desktop = Desktop::new(&ctx, Config::default(), Preferences::default());
             desktop.appearance.dark = dark;

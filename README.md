@@ -4,6 +4,11 @@ A Rust desktop timer built with egui and eframe. A clear countdown, clickable
 controls, and an offline soundscape mixer help you set your atmosphere.
 The original terminal interface is also available.
 
+The desktop opens at 920 × 700 with a compact timer and session settings on
+the left and an aligned eight-layer mixer on the right. The columns, countdown,
+and sliders grow with the window; smaller windows stack the panels with scrolling.
+The session summary stays in a bottom bar. Manrope is bundled for offline typography.
+
 ![Pomodoro desktop app with the focus timer, session settings and soundscape mixer](assets/screenshot.png)
 
 - Focus, short-break and long-break timers with a progress ring and centered controls.
@@ -53,6 +58,10 @@ break lengths, the number of sessions, automatic phase starts and desktop
 notifications. Changes made during a running session are saved for the next
 session; the current countdown continues unchanged. On smaller windows, scroll
 to reach the remaining settings.
+
+Opening the desktop app always waits for **Start focusing**, including when
+automatic phase starts are enabled. That setting applies to transitions within
+a session; **New session** also returns to the waiting screen.
 
 Pause, resume, skip, restart, end a session, and control background audio and the bell independently.
 A finished session shows totals and offers a new session. Timing continues

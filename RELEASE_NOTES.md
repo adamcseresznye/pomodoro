@@ -1,15 +1,14 @@
-Make Pomodoro Soundscapes your own with customizable backgrounds and saved atmospheres.
+Pomodoro Soundscapes v0.4.2 improves typography and makes the desktop layout adapt to your window.
 
-- Dark mode, custom colors, two-color gradients, and grain, linen, or dot textures.
-- Automatic background adjustment keeps text readable on custom colors.
-- Saved atmospheres pair your background with a sound mix. Start with Rainy evening, Forest morning, or Ocean calm, or save your own.
-- A distraction-free Focus view with the timer, your intention, and essential controls.
-- A session intention field to keep your current task in sight.
-- Gentle two-second audio fades when playback or your mix changes.
-- Daily completed-session and focus-minute totals, saved across launches using your computer's local date.
+- Bundled Manrope typography, with equal-width countdown digits and offline font support.
+- A compact default window with proportional timer and mixer columns that expand when maximized.
+- Countdown sizing responds to window width and height; mixer sliders expand with their panel.
+- Session lengths use compact number fields, and mixer layers have aligned controls.
+- A bottom bar keeps today's totals and keyboard shortcuts visible.
+- Opening the app waits for **Start focusing**, even with automatic phase transitions enabled. **New session** also returns to the waiting screen.
 
-Existing preferences remain compatible, and the original background stays available through Restore original appearance.
+Saved preferences remain compatible. Automatic phase transitions still work after you start a session, and the original terminal interface remains available.
 
-Download **pomodoro-soundscapes-windows-x64.exe** and open it on Windows. No installation is needed; soundscapes are bundled. **SHA256SUMS.txt** contains the executable checksum.
+Download **pomodoro-soundscapes-windows-x64.exe** and open it on Windows. No installation is needed; fonts and soundscapes are bundled. **SHA256SUMS.txt** contains the executable checksum.
 
-Validation: 28 automated tests passed; the audio-device test requires a system audio device and is excluded from the default suite. Light and dark Focus views were visually reviewed.
+Validation: 30 automated tests passed; one audio-device test is excluded from the default suite. The normal and maximized desktop layouts were visually reviewed.
