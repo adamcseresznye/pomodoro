@@ -1,9 +1,10 @@
-Pomodoro Soundscapes now runs on Windows, macOS and Linux, with a refreshed look and a way to bring your own audio.
+Pomodoro Soundscapes v0.6.0 makes the whole app the clock.
 
-- **New downloads:** Windows `.msi` installer and portable `.exe`, macOS `.dmg` (Apple Silicon and Intel), Linux `.deb` and `.tar.gz`. Each file has a `.sha256` checksum. The apps are not code-signed, so your system may ask you to confirm the first launch (see the README).
-- **New look:** rounded cards, pill buttons, a theme-aware progress ring with sage breaks, session dots, and a clearer mixer.
-- **Your own audio:** add a direct link to an MP3, OGG, WAV or FLAC file, or drop a file onto the window, and it plays as an extra layer. YouTube and Spotify links open in your browser.
-- Ending a session now takes a second click or key press. Atmosphere deletes ask first.
-- Presets and layers share names: Rain and Birdsong.
+- **The clock is the app:** one large, centered clock card. The ring resizes with the window so everything fits without scrolling.
+- **Soundscape and Settings on demand:** two buttons under the clock open the mixer and the session settings in sheets, so nothing competes with the timer. Focus view hides them.
+- **Clock colors:** choose a color pair (Ocean, Ember, Orchid, Rose, Gold, Graphite) or set your own focus and break colors in Appearance. They are saved with your atmospheres.
+- Appearance and Atmospheres now open at the top right, under their buttons.
+
+Downloads: Windows `.msi` installer and portable `.exe`, macOS `.dmg` (Apple Silicon and Intel), Linux `.deb` and `.tar.gz`. Each file has a `.sha256` checksum. The apps are not code-signed, so your system may ask you to confirm the first launch (see the README).
 
 Saved preferences remain compatible.

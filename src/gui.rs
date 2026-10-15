@@ -29,7 +29,7 @@ pub fn run(cfg: Config) -> eframe::Result {
                     .expect("bundled application icon"),
             )
             .with_inner_size([960.0, 700.0])
-            .with_min_inner_size([640.0, 560.0]),
+            .with_min_inner_size([560.0, 640.0]),
         ..Default::default()
     };
     eframe::run_native(
@@ -47,6 +47,8 @@ struct Desktop {
     atmosphere_name: String,
     confirm_end: bool,
     pending_delete: Option<usize>,
+    soundscape_open: bool,
+    settings_open: bool,
     custom_input: String,
     custom_note: String,
     loaded_custom: Option<String>,
@@ -118,6 +120,8 @@ impl Desktop {
             atmosphere_name: String::new(),
             confirm_end: false,
             pending_delete: None,
+            soundscape_open: false,
+            settings_open: false,
             custom_input: String::new(),
             custom_note: String::new(),
             loaded_custom: None,
@@ -195,7 +199,7 @@ impl Desktop {
     }
 
     fn shortcuts(&mut self, ctx: &egui::Context) {
-        if ctx.egui_wants_keyboard_input() {
+        if ctx.egui_wants_keyboard_input() || self.soundscape_open || self.settings_open {
             return;
         }
         let bindings = [
@@ -260,7 +264,18 @@ impl Desktop {
                 } else if !self.experience.intention.trim().is_empty() {
                     ui.label(RichText::new(&self.experience.intention).size(18.0));
                 }
-                let side = timer_side(ui.available_width(), ui.ctx().content_rect().height());
+                // Rows that are present take room from the ring, so everything fits without scrolling.
+                let mut height = ui.ctx().content_rect().height();
+                if !startup && !summary && !self.experience.focus_view {
+                    height -= 52.0; // Skip, restart and end session
+                }
+                if self.experience.focus_view {
+                    height += 62.0; // No soundscape and settings buttons
+                }
+                if !startup && self.experience.intention.trim().is_empty() {
+                    height += 32.0;
+                }
+                let side = timer_side(ui.available_width(), height);
                 let (rect, _) = ui.allocate_exact_size(Vec2::splat(side), egui::Sense::hover());
                 let center = rect.center();
                 let radius = side * 0.45;
@@ -326,10 +341,14 @@ impl Desktop {
                 if ui
                     .add_sized(
                         [ui.available_width() * 0.7, 50.0],
-                        egui::Button::new(RichText::new(primary).size(17.0).color(Color32::WHITE))
-                            .fill(accent)
-                            .stroke(Stroke::NONE)
-                            .corner_radius(25.0),
+                        egui::Button::new(
+                            RichText::new(primary)
+                                .size(17.0)
+                                .color(self.appearance.on_accent(accent)),
+                        )
+                        .fill(accent)
+                        .stroke(Stroke::NONE)
+                        .corner_radius(25.0),
                     )
                     .clicked()
                 {
@@ -431,83 +450,95 @@ impl Desktop {
                         .size(14.0)
                         .color(self.appearance.quiet()),
                 );
+                if !self.experience.focus_view {
+                    ui.add_space(12.0);
+                    let mix = if !self.sound.enabled {
+                        "off"
+                    } else {
+                        self.sound.preset.map_or("your mix", |i| PRESETS[i].0)
+                    };
+                    let labels = [format!("Soundscape: {mix}"), "Settings".to_string()];
+                    let font = egui::TextStyle::Button.resolve(ui.style());
+                    let total: f32 = labels
+                        .iter()
+                        .map(|l| {
+                            ui.painter()
+                                .layout_no_wrap(l.clone(), font.clone(), self.appearance.ink())
+                                .size()
+                                .x
+                                + 26.0
+                        })
+                        .sum();
+                    let inset = ((ui.available_width() - total - ui.spacing().item_spacing.x)
+                        * 0.5)
+                        .max(0.0);
+                    ui.horizontal(|ui| {
+                        ui.add_space(inset);
+                        if chip(ui, &labels[0], false, &self.appearance).clicked() {
+                            self.soundscape_open = true;
+                        }
+                        if chip(ui, &labels[1], false, &self.appearance).clicked() {
+                            self.settings_open = true;
+                        }
+                    });
+                }
             });
         });
-        if self.experience.focus_view {
-            return;
-        }
-        ui.add_space(12.0);
-        let settings_width = ui.available_width() - 40.0;
-        self.card_frame().show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.allocate_ui_with_layout(
-                Vec2::new(settings_width, 0.0),
-                egui::Layout::top_down(egui::Align::Min),
-                |ui| {
-                    egui::CollapsingHeader::new("Session settings")
-                        .default_open(false)
-                        .show(ui, |ui| {
-                            ui.spacing_mut().item_spacing.y = 4.0;
-                            ui.style_mut()
-                                .text_styles
-                                .insert(egui::TextStyle::Body, FontId::proportional(14.0));
-                            ui.style_mut()
-                                .text_styles
-                                .insert(egui::TextStyle::Button, FontId::proportional(14.0));
-                            if !startup && !summary && !self.experience.focus_view {
-                                ui.label(
-                                    RichText::new("Changes apply to your next session.")
-                                        .size(13.0)
-                                        .color(self.appearance.quiet()),
-                                );
-                            }
-                            egui::Grid::new("session_lengths")
-                                .num_columns(4)
-                                .min_col_width(if settings_width > 480.0 {
-                                    (settings_width - 36.0) / 4.0
-                                } else {
-                                    0.0
-                                })
-                                .spacing([12.0, 6.0])
-                                .show(ui, |ui| {
-                                    ui.label("Focus");
-                                    ui.add(
-                                        egui::DragValue::new(&mut self.settings.work_mins)
-                                            .range(1..=180)
-                                            .suffix(" min"),
-                                    );
-                                    ui.label("Sessions");
-                                    ui.add(
-                                        egui::DragValue::new(&mut self.settings.cycles)
-                                            .range(1..=12),
-                                    );
-                                    ui.end_row();
-                                    ui.label("Short break");
-                                    ui.add(
-                                        egui::DragValue::new(&mut self.settings.short_mins)
-                                            .range(1..=180)
-                                            .suffix(" min"),
-                                    );
-                                    ui.label("Long break");
-                                    ui.add(
-                                        egui::DragValue::new(&mut self.settings.long_mins)
-                                            .range(1..=180)
-                                            .suffix(" min"),
-                                    );
-                                    ui.end_row();
-                                });
-                            ui.checkbox(
-                                &mut self.settings.auto_start,
-                                "Start phases automatically",
-                            );
-                            ui.checkbox(&mut self.settings.desktop, "Desktop notifications");
-                            // Only startup configuration changes the current timer.
-                            self.settings.muted = notification::is_muted();
-                            self.timer.configure(self.settings.clone());
-                        });
-                },
-            );
+    }
+
+    fn settings_panel(&mut self, ui: &mut egui::Ui) {
+        let startup = self.timer.is_startup();
+        let summary = self.timer.is_summary();
+        ui.spacing_mut().item_spacing = Vec2::new(10.0, 8.0);
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Session settings").size(23.0));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if chip(ui, "Done", true, &self.appearance).clicked() {
+                    self.settings_open = false;
+                }
+            });
         });
+        if !startup && !summary {
+            ui.label(
+                RichText::new("Changes apply to your next session.")
+                    .size(13.0)
+                    .color(self.appearance.quiet()),
+            );
+        }
+        ui.add_space(4.0);
+        egui::Grid::new("session_lengths")
+            .num_columns(4)
+            .spacing([14.0, 10.0])
+            .show(ui, |ui| {
+                ui.label("Focus");
+                ui.add(
+                    egui::DragValue::new(&mut self.settings.work_mins)
+                        .range(1..=180)
+                        .suffix(" min"),
+                );
+                ui.label("Sessions");
+                ui.add(egui::DragValue::new(&mut self.settings.cycles).range(1..=12));
+                ui.end_row();
+                ui.label("Short break");
+                ui.add(
+                    egui::DragValue::new(&mut self.settings.short_mins)
+                        .range(1..=180)
+                        .suffix(" min"),
+                );
+                ui.label("Long break");
+                ui.add(
+                    egui::DragValue::new(&mut self.settings.long_mins)
+                        .range(1..=180)
+                        .suffix(" min"),
+                );
+                ui.end_row();
+            });
+        ui.add_space(4.0);
+        ui.checkbox(&mut self.settings.auto_start, "Start phases automatically");
+        ui.checkbox(&mut self.settings.desktop, "Desktop notifications");
+        // Only startup configuration changes the current timer.
+        self.settings.muted = notification::is_muted();
+        self.timer.configure(self.settings.clone());
     }
 
     fn card_frame(&self) -> egui::Frame {
@@ -535,9 +566,16 @@ impl Desktop {
             .text_styles
             .insert(egui::TextStyle::Button, FontId::proportional(text_size));
         let audio_ready = self.audio.message().starts_with("Ready");
-        self.card_frame().show(ui, |ui| {
+        ui.scope(|ui| {
         ui.set_width(ui.available_width());
-        ui.label(RichText::new("Your soundscape").size(23.0));
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Your soundscape").size(23.0));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if chip(ui, "Done", true, &self.appearance).clicked() {
+                    self.soundscape_open = false;
+                }
+            });
+        });
         ui.label(
             RichText::new("Start with a preset. Make it your own.").color(self.appearance.quiet()),
         );
@@ -819,7 +857,11 @@ impl Desktop {
                 self.appearance
                     .paint(ui.painter(), ui.max_rect().expand(16.0));
                 ui.horizontal_wrapped(|ui| {
-                    ui.label(RichText::new("Pomodoro").size(26.0).strong());
+                    ui.label(
+                        RichText::new("Pomodoro")
+                            .size(20.0)
+                            .color(self.appearance.quiet()),
+                    );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.spacing_mut().item_spacing.x = 8.0;
                         // Right-to-left: view toggle, then personalisation, then the bell.
@@ -867,36 +909,51 @@ impl Desktop {
                 });
                 ui.add_space(8.0);
                 egui::ScrollArea::vertical().show(ui, |ui| {
-                    if self.experience.focus_view {
-                        ui.add_space(36.0);
-                        self.timer_panel(ui);
-                    } else if ui.available_width() >= 800.0 {
-                        let timer_width =
-                            (ui.available_width() - ui.spacing().item_spacing.x) * 0.4;
-                        ui.horizontal_top(|ui| {
-                            ui.allocate_ui_with_layout(
-                                Vec2::new(timer_width, 0.0),
-                                egui::Layout::top_down(egui::Align::Min),
-                                |ui| {
-                                    self.timer_panel(ui);
-                                },
-                            );
-                            ui.allocate_ui_with_layout(
-                                Vec2::new(ui.available_width(), 0.0),
-                                egui::Layout::top_down(egui::Align::Min),
-                                |ui| {
-                                    self.sound_panel(ui);
-                                },
-                            );
-                        });
-                    } else {
-                        self.timer_panel(ui);
-                        ui.add_space(24.0);
-                        self.sound_panel(ui);
-                    }
+                    // The clock is the whole app: one centered column.
+                    let width = ui.available_width().min(560.0);
+                    ui.vertical_centered(|ui| {
+                        ui.allocate_ui_with_layout(
+                            Vec2::new(width, 0.0),
+                            egui::Layout::top_down(egui::Align::Min),
+                            |ui| {
+                                if self.experience.focus_view {
+                                    ui.add_space(12.0);
+                                }
+                                self.timer_panel(ui);
+                            },
+                        );
+                    });
                 });
             });
+        if self.soundscape_open {
+            let height = (ctx.content_rect().height() - 120.0).max(240.0);
+            let width = (ctx.content_rect().width() - 100.0).clamp(280.0, 640.0);
+            let modal = egui::Modal::new(egui::Id::new("soundscape_modal"))
+                .frame(self.card_frame())
+                .show(&ctx, |ui| {
+                    ui.set_width(width);
+                    ui.set_min_height(height);
+                    egui::ScrollArea::vertical()
+                        .max_height(height)
+                        .show(ui, |ui| self.sound_panel(ui));
+                });
+            if modal.should_close() {
+                self.soundscape_open = false;
+            }
+        }
+        if self.settings_open {
+            let modal = egui::Modal::new(egui::Id::new("settings_modal"))
+                .frame(self.card_frame())
+                .show(&ctx, |ui| {
+                    ui.set_width((ctx.content_rect().width() - 100.0).clamp(280.0, 440.0));
+                    self.settings_panel(ui);
+                });
+            if modal.should_close() {
+                self.settings_open = false;
+            }
+        }
         egui::Window::new("Appearance")
+            .anchor(egui::Align2::RIGHT_TOP, [-16.0, 64.0])
             .open(&mut self.appearance_open)
             .resizable(false)
             .show(&ctx, |ui| self.appearance.controls(ui));
@@ -997,6 +1054,7 @@ impl Desktop {
     }
     fn atmospheres_window(&mut self, ctx: &egui::Context) {
         egui::Window::new("Atmospheres")
+            .anchor(egui::Align2::RIGHT_TOP, [-16.0, 64.0])
             .open(&mut self.atmospheres_open)
             .default_width(360.0)
             .resizable(false)
@@ -1132,7 +1190,7 @@ fn fade_values(
 
 fn timer_side(width: f32, height: f32) -> f32 {
     // Grow with both dimensions while retaining room for controls and settings.
-    (width * 0.7).min((height - 510.0).max(184.0))
+    (width * 0.8).min((height - 450.0).max(150.0)).min(560.0)
 }
 
 fn percent_text(value: f64) -> String {
@@ -1148,7 +1206,7 @@ fn chip(
 ) -> egui::Response {
     let font = egui::TextStyle::Button.resolve(ui.style());
     let color = if selected {
-        Color32::WHITE
+        appearance.on_accent(appearance.accent(false))
     } else {
         appearance.ink()
     };
@@ -1238,6 +1296,40 @@ mod tests {
             }
         }
     }
+    #[test]
+    fn soundscape_sheet_and_clock_colors_render() {
+        for (width, height) in [(640., 560.), (960., 700.), (1920., 1080.)] {
+            let ctx = egui::Context::default();
+            let mut desktop = Desktop::new(&ctx, Config::default(), Preferences::default());
+            desktop.soundscape_open = true;
+            desktop.appearance.clock = [250, 220, 40];
+            desktop.appearance_open = true;
+            for _ in 0..2 {
+                let output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            Vec2::new(width, height),
+                        )),
+                        ..Default::default()
+                    },
+                    |ui| desktop.render(ui),
+                );
+                assert!(!output.shapes.is_empty());
+            }
+        }
+        // Light text on dark colors, dark text on light ones.
+        let appearance = crate::appearance::Appearance::default();
+        assert_eq!(
+            appearance.on_accent(Color32::from_rgb(62, 114, 158)),
+            Color32::WHITE
+        );
+        assert_ne!(
+            appearance.on_accent(Color32::from_rgb(250, 220, 40)),
+            Color32::WHITE
+        );
+    }
+
     #[test]
     fn desktop_controls_share_timer_state() {
         let ctx = egui::Context::default();

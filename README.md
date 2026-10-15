@@ -4,18 +4,18 @@ A Rust desktop timer built with egui and eframe. A clear countdown, clickable
 controls, and an offline soundscape mixer help you set your atmosphere.
 The original terminal interface is also available.
 
-The desktop opens at 920 × 700 with a compact timer and session settings on
-the left and an aligned eight-layer mixer on the right. The columns, countdown,
-and sliders grow with the window; smaller windows stack the panels with scrolling.
-The session summary stays in a bottom bar. Manrope is bundled for offline typography.
+The whole app is the clock: a large progress ring with your focus, pause and
+skip controls. Your soundscape and session settings sit behind two buttons under
+the clock, so nothing competes with the timer. Manrope is bundled for offline
+typography.
 
-![Pomodoro desktop app with the focus timer, session settings and soundscape mixer](assets/screenshot.png)
+![Pomodoro desktop app showing the focus clock](assets/screenshot.png)
 
 - Focus, short-break and long-break timers with a progress ring and centered controls.
 - Eight sounds to combine: rain, thunder, rainforest, birds, ocean, pink noise,
   brown noise and alpha tones.
 - Independent layer levels, master volume, eight presets and audio previews.
-- Session settings beneath the clock, available before and during a session.
+- Soundscape and session settings one click away, in sheets over the clock.
 - Saved preferences, keyboard shortcuts and optional desktop notifications.
 - Offline playback with bundled recordings and generated noise and tones.
 
@@ -69,9 +69,9 @@ cargo build --release
 ```
 
 Open `target/release/pomodoro` (`pomodoro.exe` on Windows) to launch the desktop window. Change focus,
-break lengths, and session count before starting. Choose a soundscape preset or mix your own background audio.
+break lengths, and session count before starting. Choose a soundscape preset or mix your own background audio. **Soundscape**, under the clock, opens the mixer.
 
-**Session settings** sits in a collapsible card beneath the clock. Set focus and
+**Settings**, under the clock, opens the session settings. Set focus and
 break lengths, the number of sessions, automatic phase starts and desktop
 notifications. Changes made during a running session are saved for the next
 session; the current countdown continues unchanged. On smaller windows, scroll
@@ -88,8 +88,8 @@ phase changes. Skipped phases do not add to completed-session totals.
 
 ## Make it your space
 
-Use **Appearance** for dark mode, custom colors, gradients, and grain, linen, or
-dot textures. Background colors adjust for readable text. **Atmospheres** pairs
+Use **Appearance** for dark mode, the clock's focus and break colors (pick a pair
+or set your own), custom backgrounds, gradients, and grain, linen, or dot textures. Background colors adjust for readable text. **Atmospheres** pairs
 backgrounds with sound mixes: try Rainy evening, Forest morning, or Ocean calm,
 or name and save your own. Save with the same name to update an atmosphere.
 

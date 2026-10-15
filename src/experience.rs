@@ -50,6 +50,7 @@ pub fn atmospheres() -> Vec<Atmosphere> {
                 second,
                 texture,
                 background: Background::Gradient,
+                ..Appearance::default()
             },
             sound,
         }
