@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Pomodoro Soundscapes
+Comment=Focus timer with offline ambient soundscapes
+Exec=pomodoro-soundscapes
+Icon=pomodoro-soundscapes
+Terminal=false
+Categories=Utility;AudioVideo;Audio;
+StartupWMClass=pomodoro-soundscapes

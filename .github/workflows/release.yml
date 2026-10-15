@@ -1,4 +1,4 @@
-name: Windows release
+name: Release
 
 on:
   push:
@@ -10,63 +10,127 @@ permissions:
   contents: write
 
 concurrency:
-  group: windows-release-${{ github.ref }}
+  group: release-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  windows:
-    runs-on: windows-latest
-    timeout-minutes: 45
+  release:
+    # Creates the release page once, so the platform builds can upload in parallel.
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out the tagged source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Create the release if it doesn't exist
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          if ! gh release view "$RELEASE_TAG" > /dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" --verify-tag \
+              --title "Pomodoro Soundscapes $RELEASE_TAG" --notes-file RELEASE_NOTES.md
+          fi
+
+  build:
+    needs: release
+    # Still build (without publishing) when started manually, where `release` is skipped.
+    if: ${{ !cancelled() && (needs.release.result == 'success' || needs.release.result == 'skipped') }}
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     defaults:
       run:
-        shell: pwsh
+        shell: bash
     env:
       CARGO_TERM_COLOR: always
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            test: true
+          - name: macOS Apple Silicon
+            os: macos-14
+            target: aarch64-apple-darwin
+            label: arm64
+            test: true
+          - name: macOS Intel
+            os: macos-14
+            target: x86_64-apple-darwin
+            label: x64
+            test: false
+          - name: Linux x64
+            os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            test: true
     steps:
       - name: Check out the tagged source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Install the tested Rust toolchain
         run: |
-          rustup toolchain install 1.93.1 --profile minimal --component rustfmt
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          rustup toolchain install 1.93.1 --profile minimal --component rustfmt --target ${{ matrix.target }}
           rustup default 1.93.1
 
+      - name: Install Linux libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential pkg-config libasound2-dev \
+            libx11-dev libxi-dev libxcursor-dev libxrandr-dev libxinerama-dev libwayland-dev \
+            libxkbcommon-dev libgl1-mesa-dev
+
       - name: Check formatting
+        if: runner.os == 'Linux'
         run: cargo fmt --check
 
       - name: Run tests
+        if: matrix.test
         run: cargo test --locked
 
-      - name: Build the Windows executable
-        run: cargo build --locked --release --target x86_64-pc-windows-msvc
+      - name: Build the release executable
+        run: cargo build --locked --release --target ${{ matrix.target }}
 
-      - name: Package the executable and checksum
+      - name: Package for Windows (exe and msi)
+        if: runner.os == 'Windows'
+        run: bash packaging/build-windows.sh ${{ matrix.target }}
+
+      - name: Package for macOS
+        if: runner.os == 'macOS'
+        run: bash packaging/build-macos.sh ${{ matrix.target }} ${{ matrix.label }}
+
+      - name: Package for Linux
+        if: runner.os == 'Linux'
+        run: bash packaging/build-linux.sh
+
+      - name: Write checksums
         run: |
-          New-Item -ItemType Directory -Path dist -Force | Out-Null
-          Copy-Item -LiteralPath target/x86_64-pc-windows-msvc/release/pomodoro.exe -Destination dist/pomodoro-soundscapes-windows-x64.exe
-          $digest = (Get-FileHash -LiteralPath dist/pomodoro-soundscapes-windows-x64.exe -Algorithm SHA256).Hash.ToLowerInvariant()
-          "$digest  pomodoro-soundscapes-windows-x64.exe" | Set-Content -LiteralPath dist/SHA256SUMS.txt -Encoding utf8NoBOM
+          cd dist
+          for file in *; do
+            if command -v sha256sum > /dev/null; then
+              sha256sum "$file" > "$file.sha256"
+            else
+              shasum -a 256 "$file" > "$file.sha256"
+            fi
+          done
+          ls -l
 
       - name: Upload the build artifact
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
-          name: pomodoro-windows-x64
+          name: pomodoro-${{ matrix.target }}
           path: dist/*
           if-no-files-found: error
 
-      - name: Publish the tagged release
+      - name: Publish to the tagged release
         if: startsWith(github.ref, 'refs/tags/')
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ github.ref_name }}
-        run: |
-          Get-Content -LiteralPath RELEASE_NOTES.md -Raw | Set-Content -LiteralPath release-notes.md -Encoding utf8NoBOM
-          gh release view $env:RELEASE_TAG *> $null
-          if ($LASTEXITCODE -ne 0) {
-            gh release create $env:RELEASE_TAG --verify-tag --title "Pomodoro Soundscapes $env:RELEASE_TAG" --notes-file release-notes.md
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          }
-          gh release upload $env:RELEASE_TAG dist/pomodoro-soundscapes-windows-x64.exe dist/SHA256SUMS.txt --clobber
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        run: gh release upload "$RELEASE_TAG" dist/* --clobber

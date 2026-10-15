@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- WiX Toolset v3 source. Built by packaging/build-windows.sh. -->
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product Id="*" Name="Pomodoro Soundscapes" Language="1033" Version="$(var.Version)"
+           Manufacturer="Adam Cseresznye" UpgradeCode="7F745C73-0E15-47C3-9AFF-DAF43E99E615">
+    <Package InstallerVersion="500" Compressed="yes" InstallScope="perMachine"
+             Description="Pomodoro timer with offline ambient soundscapes" />
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Pomodoro Soundscapes is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <Icon Id="app.ico" SourceFile="assets/app-icon.ico" />
+    <Property Id="ARPPRODUCTICON" Value="app.ico" />
+
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFiles64Folder">
+        <Directory Id="INSTALLFOLDER" Name="Pomodoro Soundscapes" />
+      </Directory>
+      <Directory Id="ProgramMenuFolder" />
+    </Directory>
+
+    <DirectoryRef Id="INSTALLFOLDER">
+      <Component Id="MainExecutable" Guid="*" Win64="yes">
+        <File Id="PomodoroExe" Source="$(var.ExePath)" Name="pomodoro-soundscapes.exe" KeyPath="yes">
+          <Shortcut Id="StartMenuShortcut" Directory="ProgramMenuFolder" Name="Pomodoro Soundscapes"
+                    WorkingDirectory="INSTALLFOLDER" Icon="app.ico" Advertise="yes" />
+        </File>
+      </Component>
+    </DirectoryRef>
+
+    <Feature Id="Main" Title="Pomodoro Soundscapes" Level="1">
+      <ComponentRef Id="MainExecutable" />
+    </Feature>
+  </Product>
+</Wix>

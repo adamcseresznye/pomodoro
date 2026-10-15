@@ -19,7 +19,7 @@ pub const NAMES: [&str; COUNT] = [
     "Rain",
     "Thunder",
     "Rainforest",
-    "Birds",
+    "Birdsong",
     "Ocean",
     "Pink noise",
     "Brown noise",
@@ -36,10 +36,10 @@ pub const DESCRIPTIONS: [&str; COUNT] = [
     "200 / 210 Hz stereo tones · 10 Hz difference",
 ];
 pub const PRESETS: [(&str, [f32; COUNT]); 8] = [
-    ("Gentle rain", [0.75, 0., 0., 0., 0., 0., 0., 0.]),
+    ("Rain", [0.75, 0., 0., 0., 0., 0., 0., 0.]),
     ("Thunderstorm", [0.7, 0.45, 0., 0., 0., 0., 0., 0.]),
     ("Rainforest", [0.15, 0., 0.75, 0.25, 0., 0., 0., 0.]),
-    ("Morning birds", [0., 0., 0., 0.8, 0., 0., 0., 0.]),
+    ("Birdsong", [0., 0., 0., 0.8, 0., 0., 0., 0.]),
     ("Ocean", [0., 0., 0., 0., 0.8, 0., 0., 0.]),
     ("Pink noise", [0., 0., 0., 0., 0., 0.75, 0., 0.]),
     ("Brown noise", [0., 0., 0., 0., 0., 0., 0.75, 0.]),
@@ -54,6 +54,9 @@ pub struct Settings {
     pub enabled: bool,
     pub during_breaks: bool,
     pub preset: Option<usize>,
+    /// Direct audio link or file path loaded as an extra layer.
+    pub custom_source: Option<String>,
+    pub custom_level: f32,
 }
 impl Default for Settings {
     fn default() -> Self {
@@ -63,6 +66,8 @@ impl Default for Settings {
             enabled: true,
             during_breaks: true,
             preset: Some(0),
+            custom_source: None,
+            custom_level: 0.7,
         }
     }
 }
@@ -77,6 +82,7 @@ impl Settings {
         }
         self.master = safe(self.master);
         self.levels = self.levels.map(safe);
+        self.custom_level = safe(self.custom_level);
         if self.preset.is_some_and(|i| i >= PRESETS.len()) {
             self.preset = None;
         }
@@ -85,6 +91,14 @@ impl Settings {
         if let Some((_, levels)) = PRESETS.get(index) {
             self.levels = *levels;
             self.preset = Some(index);
+        }
+    }
+    /// Gain for the user's own audio layer.
+    pub fn custom_gain(&self, playing: bool) -> f32 {
+        if playing && self.enabled {
+            self.custom_level * self.master
+        } else {
+            0.
         }
     }
     pub fn gains(&self, playing: bool, preview: Option<usize>) -> [f32; COUNT] {
@@ -157,35 +171,46 @@ impl Preferences {
     }
 }
 pub fn preferences_path() -> PathBuf {
+    let macos_support = || {
+        cfg!(target_os = "macos")
+            .then(|| std::env::var_os("HOME"))
+            .flatten()
+            .map(|home| PathBuf::from(home).join("Library/Application Support"))
+    };
     let base = std::env::var_os("APPDATA")
         .map(PathBuf::from)
+        .or_else(macos_support)
         .or_else(|| std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from))
         .or_else(|| std::env::var_os("HOME").map(|p| PathBuf::from(p).join(".config")))
         .unwrap_or_else(std::env::temp_dir);
     base.join("pomodoro-soundscapes").join("preferences.json")
 }
 
-#[derive(Clone, Copy)]
+#[derive(Default)]
 struct Control {
     gains: [f32; COUNT],
     restart: Option<usize>,
+    custom_gain: f32,
+    /// A freshly loaded clip (`Some(empty)` removes the current one).
+    custom_clip: Option<Vec<f32>>,
 }
 
 pub struct Engine {
     control: Arc<Mutex<Control>>,
     stop: Arc<AtomicBool>,
     pub status: Arc<Mutex<String>>,
+    custom_status: Arc<Mutex<String>>,
+    custom_request: Arc<std::sync::atomic::AtomicU64>,
 }
 impl Engine {
     #[cfg_attr(test, allow(dead_code))]
     pub fn new() -> Self {
         let engine = Self {
-            control: Arc::new(Mutex::new(Control {
-                gains: [0.; COUNT],
-                restart: None,
-            })),
+            control: Arc::new(Mutex::new(Control::default())),
             stop: Arc::new(AtomicBool::new(false)),
             status: Arc::new(Mutex::new("Preparing audio…".into())),
+            custom_status: Arc::new(Mutex::new(String::new())),
+            custom_request: Arc::new(Default::default()),
         };
         let control = engine.control.clone();
         let stop = engine.stop.clone();
@@ -213,13 +238,57 @@ impl Engine {
     #[cfg(test)]
     pub fn silent() -> Self {
         Self {
-            control: Arc::new(Mutex::new(Control {
-                gains: [0.; COUNT],
-                restart: None,
-            })),
+            control: Arc::new(Mutex::new(Control::default())),
             stop: Arc::new(AtomicBool::new(false)),
             status: Arc::new(Mutex::new("Test audio".into())),
+            custom_status: Arc::new(Mutex::new(String::new())),
+            custom_request: Arc::new(Default::default()),
         }
+    }
+    pub fn set_custom_gain(&self, gain: f32) {
+        if let Ok(mut control) = self.control.lock() {
+            control.custom_gain = if gain.is_finite() {
+                gain.clamp(0., 1.)
+            } else {
+                0.
+            };
+        }
+    }
+    pub fn custom_message(&self) -> String {
+        self.custom_status
+            .lock()
+            .map(|s| s.clone())
+            .unwrap_or_default()
+    }
+    /// Load a link or file on a background thread; a newer request wins.
+    pub fn load_custom(&self, link: crate::custom_audio::Link, name: String) {
+        let id = self.custom_request.fetch_add(1, Ordering::SeqCst) + 1;
+        *self.custom_status.lock().unwrap() = format!("Loading {name}…");
+        let request = self.custom_request.clone();
+        let status = self.custom_status.clone();
+        let control = self.control.clone();
+        std::thread::spawn(move || {
+            let result = crate::custom_audio::load(&link);
+            if request.load(Ordering::SeqCst) != id {
+                return;
+            }
+            match result {
+                Ok(clip) => {
+                    if let Ok(mut control) = control.lock() {
+                        control.custom_clip = Some(clip);
+                    }
+                    *status.lock().unwrap() = format!("Playing {name}");
+                }
+                Err(error) => *status.lock().unwrap() = error,
+            }
+        });
+    }
+    pub fn clear_custom(&self) {
+        self.custom_request.fetch_add(1, Ordering::SeqCst);
+        if let Ok(mut control) = self.control.lock() {
+            control.custom_clip = Some(Vec::new());
+        }
+        self.custom_status.lock().unwrap().clear();
     }
     pub fn update(&self, gains: [f32; COUNT]) {
         if let Ok(mut control) = self.control.lock() {
@@ -285,7 +354,7 @@ fn decode_clips() -> Result<Vec<Vec<f32>>, String> {
 
 /// Overlap the tail and head with a linear crossfade. Playback starts after
 /// the consumed head and wraps to that same position, with no silent padding.
-fn crossfade_loop(samples: Vec<f32>, overlap: usize) -> Vec<f32> {
+pub(crate) fn crossfade_loop(samples: Vec<f32>, overlap: usize) -> Vec<f32> {
     let overlap = (overlap.min(samples.len() / 4) / 2) * 2;
     if overlap == 0 {
         return samples;
@@ -353,6 +422,10 @@ struct Mixer {
     noise: [Noise; 2],
     frame: u64,
     right: Option<f32>,
+    custom: Vec<f32>,
+    custom_position: usize,
+    custom_gain: f32,
+    custom_target: f32,
 }
 impl Mixer {
     fn new(clips: Vec<Vec<f32>>, control: Arc<Mutex<Control>>, stop: Arc<AtomicBool>) -> Self {
@@ -367,12 +440,21 @@ impl Mixer {
             noise: [Noise::new(0x73813265), Noise::new(0x91683751)],
             frame: 0,
             right: None,
+            custom: Vec::new(),
+            custom_position: 0,
+            custom_gain: 0.,
+            custom_target: 0.,
         }
     }
     fn stereo(&mut self) -> [f32; 2] {
         if self.frame % 240 == 0 {
             if let Ok(mut control) = self.control.lock() {
                 self.targets = control.gains;
+                self.custom_target = control.custom_gain;
+                if let Some(clip) = control.custom_clip.take() {
+                    self.custom = clip;
+                    self.custom_position = 0;
+                }
                 if let Some(index) = control.restart.take() {
                     if index < 5 {
                         self.pending_restart[index] = true;
@@ -395,7 +477,14 @@ impl Mixer {
                 self.pending_restart[i] = false;
             }
         }
+        self.custom_gain += (self.custom_target - self.custom_gain) * 0.0005;
         let mut output = [0.; 2];
+        if !self.custom.is_empty() {
+            let p = self.custom_position % self.custom.len();
+            output[0] += self.custom[p] * self.custom_gain;
+            output[1] += self.custom[p + 1] * self.custom_gain;
+            self.custom_position = (p + 2) % self.custom.len();
+        }
         for i in 0..5 {
             let clip = &self.clips[i];
             if !clip.is_empty() {
@@ -463,7 +552,7 @@ mod tests {
             vec![vec![0.; 400]; 5],
             Arc::new(Mutex::new(Control {
                 gains,
-                restart: None,
+                ..Default::default()
             })),
             Arc::new(AtomicBool::new(false)),
         )
@@ -481,6 +570,28 @@ mod tests {
             std::thread::sleep(Duration::from_millis(100));
         }
         panic!("audio initialization timed out: {}", engine.message());
+    }
+
+    #[test]
+    fn custom_clip_loops_and_fades_in() {
+        let mut source = mixer([0.; COUNT]);
+        {
+            let mut control = source.control.lock().unwrap();
+            control.custom_clip = Some(vec![0.3; 400]);
+            control.custom_gain = 1.;
+        }
+        assert!(source.stereo()[0].abs() < 0.01);
+        for _ in 0..12000 {
+            source.stereo();
+        }
+        // Longer than the 200-frame clip, so it has looped.
+        assert!(source.stereo()[0] > 0.5);
+        source.control.lock().unwrap().custom_clip = Some(Vec::new());
+        for _ in 0..500 {
+            source.stereo();
+        }
+        assert!(source.custom.is_empty());
+        assert_eq!(source.stereo(), [0.; 2]);
     }
 
     #[test]

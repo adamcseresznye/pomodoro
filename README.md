@@ -21,16 +21,34 @@ The session summary stays in a bottom bar. Manrope is bundled for offline typogr
 
 ## Download
 
-Download **pomodoro-soundscapes-windows-x64.exe** from the
-[latest release](https://github.com/adamcseresznye/pomodoro/releases/latest)
-and open it on Windows. No installation or separate audio files are needed.
+Get the file for your system from the
+[latest release](https://github.com/adamcseresznye/pomodoro/releases/latest).
+Fonts and soundscapes are bundled, so nothing else needs installing.
+
+| System | File | How to open it |
+|---|---|---|
+| Windows 10/11 (64-bit) | `pomodoro-soundscapes-windows-x64.msi` | Double-click it to install; adds a Start menu shortcut. |
+| Windows, no install | `pomodoro-soundscapes-windows-x64.exe` | Double-click it to run directly. |
+| macOS, Apple Silicon (M1 or later) | `pomodoro-soundscapes-macos-arm64.dmg` | Drag the app to Applications. |
+| macOS, Intel | `pomodoro-soundscapes-macos-x64.dmg` | Drag the app to Applications. |
+| Linux, Debian/Ubuntu (64-bit) | `pomodoro-soundscapes_<version>_amd64.deb` | `sudo apt install ./pomodoro-soundscapes_*_amd64.deb` |
+| Linux, other (64-bit) | `pomodoro-soundscapes-linux-x64.tar.gz` | Extract it and run `pomodoro-soundscapes`. |
+
+Each file has a matching `.sha256` checksum.
+
+The apps are not code-signed, so your system may warn the first time:
+- **Windows:** SmartScreen says "Windows protected your PC". Choose **More info**, then **Run anyway**.
+- **macOS:** if the app is blocked, right-click it, choose **Open**, then confirm. Or allow it under
+  **System Settings > Privacy & Security**.
+- **Linux:** the tarball may need `chmod +x pomodoro-soundscapes`. Audio uses ALSA (PipeWire and
+  PulseAudio provide it), and a desktop notification service is used if one is running.
 
 ## Build requirements
 
 Install [Rust](https://www.rust-lang.org/tools/install) with Cargo.
 On Windows, use the MSVC toolchain with Visual Studio Build Tools (Desktop
 development with C++) and the Windows SDK. The SDK resource compiler embeds
-the app icon into the executable.
+the app icon into the executable. macOS needs only the Xcode command line tools.
 
 Linux builds also need development libraries for ALSA and the window system.
 On Ubuntu/Debian:
@@ -50,10 +68,10 @@ cargo run -- --terminal
 cargo build --release
 ```
 
-Open `target/release/pomodoro.exe` to launch the desktop window. Change focus,
+Open `target/release/pomodoro` (`pomodoro.exe` on Windows) to launch the desktop window. Change focus,
 break lengths, and session count before starting. Choose a soundscape preset or mix your own background audio.
 
-**Session settings** is expanded by default beneath the clock. Set focus and
+**Session settings** sits in a collapsible card beneath the clock. Set focus and
 break lengths, the number of sessions, automatic phase starts and desktop
 notifications. Changes made during a running session are saved for the next
 session; the current countdown continues unchanged. On smaller windows, scroll
@@ -132,7 +150,23 @@ Continue soundscape during breaks to keep listening during break phases.
 Background audio and the notification bell have independent controls.
 Recordings are embedded in the executable: no account or network is needed.
 Preset, layer levels, master volume, playback options, bell and session settings
-are saved in `%APPDATA%/pomodoro-soundscapes/preferences.json` on Windows.
+are saved in `preferences.json` inside a `pomodoro-soundscapes` folder: `%APPDATA%` on Windows,
+`~/Library/Application Support` on macOS, and `~/.config` (or `$XDG_CONFIG_HOME`) on Linux.
+
+### Your own audio
+
+Under the mixer, **Your own audio** adds one more layer from a source you choose,
+for example a lofi track or a coffee shop recording you are allowed to use.
+Paste a direct link to an MP3, OGG, WAV or FLAC file, paste a file path, or drop a
+file onto the window. It loops, follows the timer like the other layers, has its own
+volume, and is remembered for next time (and saved inside atmospheres).
+
+- Only the first five minutes are used, and downloads are limited to 60 MB.
+- Links are downloaded with `curl`, which ships with Windows 10 and later, macOS
+  and most Linux systems.
+- YouTube, Spotify, SoundCloud and similar links can't be decoded by the app, so they
+  open in your browser instead. They play there, outside the app, and the timer
+  can't pause them.
 
 Alpha tones play a 200 Hz tone in the left channel and 210 Hz in the right.
 Use stereo headphones to hear the two channels separately. This is an audio
@@ -147,8 +181,9 @@ Noise and tones are generated directly by the app.
 
 ## Releases
 
-The [Windows release workflow](.github/workflows/release.yml) runs when a
-version tag such as `v0.4.0` is pushed. It checks formatting, runs tests, builds
-the Windows executable and publishes it with a SHA-256 checksum on the GitHub
-release page. The tagged source remains available alongside the executable.
-The workflow can also be run manually to produce a downloadable build artifact.
+The [release workflow](.github/workflows/release.yml) runs when a version tag
+such as `v0.5.0` is pushed. It checks formatting, runs the tests on Windows,
+macOS and Linux, builds the Windows `.msi` installer and portable `.exe`, macOS `.dmg` files (Apple Silicon and
+Intel) and Linux `.deb` and `.tar.gz` packages, and publishes them with SHA-256
+checksums on the GitHub release page. The workflow can also be run manually to
+produce downloadable build artifacts without publishing.

@@ -57,6 +57,60 @@ impl Appearance {
             Color32::from_rgb(248, 251, 253)
         }
     }
+    /// Progress and primary-button colour; breaks use a sage tone so the phase reads at a glance.
+    pub fn accent(&self, on_break: bool) -> Color32 {
+        match (on_break, self.dark) {
+            (false, false) => Color32::from_rgb(62, 114, 158),
+            (false, true) => Color32::from_rgb(70, 124, 170),
+            (true, false) => Color32::from_rgb(60, 117, 90),
+            (true, true) => Color32::from_rgb(66, 124, 96),
+        }
+    }
+    /// Unfilled part of the progress ring.
+    pub fn track(&self) -> Color32 {
+        if self.dark {
+            Color32::from_white_alpha(28)
+        } else {
+            Color32::from_black_alpha(26)
+        }
+    }
+    /// Shared widget styling so unchecked boxes, sliders and disabled buttons stay visible.
+    pub fn visuals(&self) -> egui::Visuals {
+        let mut visuals = if self.dark {
+            egui::Visuals::dark()
+        } else {
+            egui::Visuals::light()
+        };
+        visuals.override_text_color = Some(self.ink());
+        let accent = self.accent(false);
+        visuals.widgets.active.bg_fill = accent;
+        visuals.selection.bg_fill = accent;
+        let (fill, edge) = if self.dark {
+            (Color32::from_white_alpha(18), Color32::from_white_alpha(80))
+        } else {
+            (Color32::from_black_alpha(14), Color32::from_black_alpha(70))
+        };
+        visuals.widgets.inactive.weak_bg_fill = fill;
+        visuals.widgets.inactive.bg_fill = fill;
+        visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, edge);
+        visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0, edge.gamma_multiply(0.6));
+        let round = egui::CornerRadius::same(10);
+        visuals.widgets.noninteractive.corner_radius = round;
+        visuals.widgets.inactive.corner_radius = round;
+        visuals.widgets.hovered.corner_radius = round;
+        visuals.widgets.active.corner_radius = round;
+        visuals.widgets.open.corner_radius = round;
+        visuals.window_corner_radius = egui::CornerRadius::same(18);
+        visuals.menu_corner_radius = egui::CornerRadius::same(12);
+        visuals.handle_shape = egui::style::HandleShape::Circle;
+        visuals.slider_trailing_fill = true;
+        visuals.extreme_bg_color = if self.dark {
+            Color32::from_rgb(20, 31, 42)
+        } else {
+            Color32::WHITE
+        };
+        visuals
+    }
     // Preserve the selected hue while ensuring readable text at both gradient ends.
     fn readable(&self, mut rgb: [u8; 3]) -> [u8; 3] {
         let luminance = |rgb: [u8; 3]| {

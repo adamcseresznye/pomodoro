@@ -12,7 +12,6 @@ use eframe::egui::{self, Color32, FontId, RichText, Stroke, Vec2};
 use std::time::{Duration, Instant};
 
 const BACKGROUND: Color32 = Color32::from_rgb(231, 239, 245);
-const BLUE: Color32 = Color32::from_rgb(62, 114, 158);
 
 pub fn run(cfg: Config) -> eframe::Result {
     let preferences = Preferences::load(&soundscape::preferences_path());
@@ -29,7 +28,7 @@ pub fn run(cfg: Config) -> eframe::Result {
                 eframe::icon_data::from_png_bytes(include_bytes!("../assets/app-icon.png"))
                     .expect("bundled application icon"),
             )
-            .with_inner_size([920.0, 700.0])
+            .with_inner_size([960.0, 700.0])
             .with_min_inner_size([640.0, 560.0]),
         ..Default::default()
     };
@@ -46,6 +45,11 @@ struct Desktop {
     experience: crate::experience::Experience,
     atmospheres_open: bool,
     atmosphere_name: String,
+    confirm_end: bool,
+    pending_delete: Option<usize>,
+    custom_input: String,
+    custom_note: String,
+    loaded_custom: Option<String>,
     recorded_sessions: u64,
     recorded_seconds: u64,
     fade_from: [f32; soundscape::COUNT],
@@ -95,15 +99,8 @@ impl Desktop {
         };
         ctx.set_theme(theme);
         let mut style = (*ctx.style_of(theme)).clone();
-        style.visuals = if prefs.appearance.dark {
-            egui::Visuals::dark()
-        } else {
-            egui::Visuals::light()
-        };
-        style.visuals.override_text_color = Some(prefs.appearance.ink());
+        style.visuals = prefs.appearance.visuals();
         style.visuals.panel_fill = BACKGROUND;
-        style.visuals.widgets.active.bg_fill = BLUE;
-        style.visuals.selection.bg_fill = BLUE;
         style.spacing.item_spacing = Vec2::new(10.0, 6.0);
         style.spacing.button_padding = Vec2::new(10.0, 6.0);
         style
@@ -113,12 +110,17 @@ impl Desktop {
             .text_styles
             .insert(egui::TextStyle::Button, FontId::proportional(16.0));
         ctx.set_global_style(style);
-        Self {
+        let desktop = Self {
             appearance: prefs.appearance,
             appearance_open: false,
             experience: prefs.experience,
             atmospheres_open: false,
             atmosphere_name: String::new(),
+            confirm_end: false,
+            pending_delete: None,
+            custom_input: String::new(),
+            custom_note: String::new(),
+            loaded_custom: None,
             recorded_sessions: 0,
             recorded_seconds: 0,
             fade_from: [0.; soundscape::COUNT],
@@ -142,7 +144,54 @@ impl Desktop {
             preview_saved_enabled: false,
             save_at: None,
             save_error: None,
+        };
+        desktop
+    }
+
+    /// Keep the engine's extra layer in step with `sound.custom_source`, whether it
+    /// came from saved preferences, the input box or an applied atmosphere.
+    fn sync_custom(&mut self) {
+        use crate::custom_audio::{classify, label, Link};
+        if self.sound.custom_source == self.loaded_custom {
+            return;
         }
+        match self.sound.custom_source.clone() {
+            Some(source) => match classify(&source) {
+                link @ (Link::Download(_) | Link::File(_)) => {
+                    self.audio.load_custom(link, label(&source));
+                }
+                _ => self.sound.custom_source = None,
+            },
+            None => self.audio.clear_custom(),
+        }
+        self.loaded_custom = self.sound.custom_source.clone();
+    }
+
+    fn use_custom(&mut self, input: &str) {
+        use crate::custom_audio::{classify, Link};
+        self.custom_note.clear();
+        match classify(input) {
+            Link::Browser(url) => {
+                self.custom_note = match webbrowser::open(&url) {
+                    Ok(()) => "Opened in your browser. It plays outside this app, so the timer can't pause it.".into(),
+                    Err(_) => "Couldn't open your browser.".into(),
+                };
+                self.custom_input.clear();
+            }
+            Link::Invalid => {
+                self.custom_note =
+                    "Paste an http(s) link to an audio file, or the path of a file.".into();
+            }
+            _ => {
+                self.sound.custom_source = Some(input.trim().trim_matches('"').to_owned());
+                self.custom_input.clear();
+            }
+        }
+    }
+
+    fn clear_custom(&mut self) {
+        self.sound.custom_source = None;
+        self.custom_note.clear();
     }
 
     fn shortcuts(&mut self, ctx: &egui::Context) {
@@ -163,6 +212,12 @@ impl Desktop {
         ];
         for (key, action) in bindings {
             if ctx.input(|i| i.key_pressed(key)) {
+                // Ending a running session takes two presses so one stray key can't lose it.
+                if action == KeyAction::Quit && self.timer_active() && !self.confirm_end {
+                    self.confirm_end = true;
+                    continue;
+                }
+                self.confirm_end = false;
                 self.timer.handle_action(action);
             }
         }
@@ -176,178 +231,221 @@ impl Desktop {
         };
         let summary = self.timer.is_summary();
         let startup = self.timer.is_startup();
-        ui.vertical_centered(|ui| {
-            ui.label(RichText::new(if summary { "Session complete" } else { phase }).size(23.0));
-            ui.label(
-                RichText::new(if summary {
-                    "Your time, well spent."
-                } else if startup {
-                    "Choose your sound. Settle into focus."
-                } else if self.timer.is_paused() {
-                    "Paused. Take your time."
-                } else {
-                    "One thing at a time."
-                })
-                .color(self.appearance.quiet()),
-            );
-            ui.add_space(4.0);
-            if startup && !self.experience.focus_view {
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.experience.intention)
-                        .hint_text("What are you focusing on?")
-                        .desired_width(ui.available_width() * 0.9)
-                        .char_limit(120),
-                );
-            } else if !self.experience.intention.trim().is_empty() {
-                ui.label(RichText::new(&self.experience.intention).size(18.0));
-            }
-            let side = timer_side(ui.available_width(), ui.ctx().content_rect().height());
-            let (rect, _) = ui.allocate_exact_size(Vec2::splat(side), egui::Sense::hover());
-            let center = rect.center();
-            let radius = side * 0.45;
-            ui.painter().circle_stroke(
-                center,
-                radius,
-                Stroke::new(6.0, Color32::from_rgb(204, 220, 232)),
-            );
-            let progress = if summary { 1.0 } else { self.timer.progress() };
-            if progress > 0.0 {
-                let points: Vec<_> = (0..=100)
-                    .map(|i| {
-                        let angle = -std::f32::consts::FRAC_PI_2
-                            + std::f32::consts::TAU * progress * i as f32 / 100.0;
-                        center + Vec2::new(angle.cos(), angle.sin()) * radius
-                    })
-                    .collect();
-                ui.painter()
-                    .add(egui::Shape::line(points, Stroke::new(6.0, BLUE)));
-            }
-            ui.painter().text(
-                center - Vec2::new(0.0, 6.0),
-                egui::Align2::CENTER_CENTER,
-                if summary {
-                    format!("{}", self.timer.stats().work_completed)
-                } else {
-                    fmt_mmss(self.timer.remaining_secs())
-                },
-                FontId::new(side * 0.23, egui::FontFamily::Name("timer".into())),
-                self.appearance.ink(),
-            );
-            ui.painter().text(
-                center + Vec2::new(0.0, side * 0.18),
-                egui::Align2::CENTER_CENTER,
-                if summary {
-                    "sessions finished"
-                } else {
-                    "remaining"
-                },
-                FontId::proportional(14.0),
-                self.appearance.quiet(),
-            );
-            ui.add_space(8.0);
-            let primary = if summary {
-                "New session"
-            } else if startup {
-                "Start focusing"
-            } else if self.timer.transition_message().is_some() {
-                "Continue"
-            } else if self.timer.is_paused() {
-                "Resume"
-            } else {
-                "Pause"
-            };
-            if ui
-                .add_sized(
-                    [ui.available_width() * 0.6, 44.0],
-                    egui::Button::new(RichText::new(primary).color(Color32::WHITE)).fill(BLUE),
-                )
-                .clicked()
-            {
-                if summary {
-                    self.settings.muted = notification::is_muted();
-                    self.record_progress();
-                    self.recorded_sessions = 0;
-                    self.recorded_seconds = 0;
-                    self.timer = App::new_waiting(self.settings.clone());
-                } else {
-                    if startup {
-                        self.settings.muted = notification::is_muted();
-                        self.timer.configure(self.settings.clone());
-                    }
-                    self.timer.handle_action(KeyAction::Confirm);
-                }
-            }
-            if !startup && !summary && !self.experience.focus_view {
-                let labels = ["Skip", "Restart phase", "End session"];
-                let font = egui::TextStyle::Button.resolve(ui.style());
-                let widths = labels.map(|label| {
-                    ui.painter()
-                        .layout_no_wrap(label.into(), font.clone(), self.appearance.ink())
-                        .size()
-                        .x
-                        + ui.spacing().button_padding.x * 2.0
-                });
-                let row_width = widths.iter().sum::<f32>() + ui.spacing().item_spacing.x * 2.0;
-                let inset = ((ui.available_width() - row_width) * 0.5).max(0.0);
-                ui.horizontal(|ui| {
-                    ui.add_space(inset);
-                    if ui
-                        .add_sized([widths[0], 38.0], egui::Button::new(labels[0]))
-                        .clicked()
-                    {
-                        self.timer.handle_action(KeyAction::Skip);
-                    }
-                    if ui
-                        .add_sized([widths[1], 38.0], egui::Button::new(labels[1]))
-                        .clicked()
-                    {
-                        self.timer.handle_action(KeyAction::Restart);
-                    }
-                    if ui
-                        .add_sized([widths[2], 38.0], egui::Button::new(labels[2]))
-                        .clicked()
-                    {
-                        self.timer.handle_action(KeyAction::Quit);
-                    }
-                });
-            }
-            if let Some(message) = self.timer.transition_message() {
-                ui.label(message);
-            }
-            ui.add_space(4.0);
-            ui.label(
-                RichText::new(format!(
-                    "Session {} of {}",
-                    (self.timer.stats().work_completed + 1).min(self.timer.config().cycles),
-                    self.timer.config().cycles
-                ))
-                .color(self.appearance.quiet()),
-            );
-            if !self.experience.focus_view || summary {
+        self.card_frame().show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.vertical_centered(|ui| {
                 ui.label(
-                    RichText::new(format!(
+                    RichText::new(if summary { "Session complete" } else { phase }).size(23.0),
+                );
+                ui.label(
+                    RichText::new(if summary {
+                        "Your time, well spent."
+                    } else if startup {
+                        "Choose your sound. Settle into focus."
+                    } else if self.timer.is_paused() {
+                        "Paused. Take your time."
+                    } else {
+                        "One thing at a time."
+                    })
+                    .color(self.appearance.quiet()),
+                );
+                ui.add_space(4.0);
+                if startup && !self.experience.focus_view {
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.experience.intention)
+                            .hint_text("What are you focusing on?")
+                            .desired_width(ui.available_width() * 0.9)
+                            .char_limit(120),
+                    );
+                } else if !self.experience.intention.trim().is_empty() {
+                    ui.label(RichText::new(&self.experience.intention).size(18.0));
+                }
+                let side = timer_side(ui.available_width(), ui.ctx().content_rect().height());
+                let (rect, _) = ui.allocate_exact_size(Vec2::splat(side), egui::Sense::hover());
+                let center = rect.center();
+                let radius = side * 0.45;
+                let accent = self
+                    .appearance
+                    .accent(self.timer.phase() != PomodoroTask::Work);
+                ui.painter().circle_stroke(
+                    center,
+                    radius,
+                    Stroke::new(10.0, self.appearance.track()),
+                );
+                let progress = if summary { 1.0 } else { self.timer.progress() };
+                if progress > 0.0 {
+                    let points: Vec<_> = (0..=100)
+                        .map(|i| {
+                            let angle = -std::f32::consts::FRAC_PI_2
+                                + std::f32::consts::TAU * progress * i as f32 / 100.0;
+                            center + Vec2::new(angle.cos(), angle.sin()) * radius
+                        })
+                        .collect();
+                    let head = points[points.len() - 1];
+                    let tail = points[0];
+                    ui.painter()
+                        .add(egui::Shape::line(points, Stroke::new(10.0, accent)));
+                    // Round caps on both ends of the progress arc.
+                    ui.painter().circle_filled(head, 5.0, accent);
+                    ui.painter().circle_filled(tail, 5.0, accent);
+                }
+                ui.painter().text(
+                    center - Vec2::new(0.0, 6.0),
+                    egui::Align2::CENTER_CENTER,
+                    if summary {
+                        format!("{}", self.timer.stats().work_completed)
+                    } else {
+                        fmt_mmss(self.timer.remaining_secs())
+                    },
+                    FontId::new(side * 0.23, egui::FontFamily::Name("timer".into())),
+                    self.appearance.ink(),
+                );
+                ui.painter().text(
+                    center + Vec2::new(0.0, side * 0.18),
+                    egui::Align2::CENTER_CENTER,
+                    if summary {
+                        "sessions finished"
+                    } else {
+                        "remaining"
+                    },
+                    FontId::proportional(14.0),
+                    self.appearance.quiet(),
+                );
+                ui.add_space(8.0);
+                let primary = if summary {
+                    "New session"
+                } else if startup {
+                    "Start focusing"
+                } else if self.timer.transition_message().is_some() {
+                    "Continue"
+                } else if self.timer.is_paused() {
+                    "Resume"
+                } else {
+                    "Pause"
+                };
+                if ui
+                    .add_sized(
+                        [ui.available_width() * 0.7, 50.0],
+                        egui::Button::new(RichText::new(primary).size(17.0).color(Color32::WHITE))
+                            .fill(accent)
+                            .stroke(Stroke::NONE)
+                            .corner_radius(25.0),
+                    )
+                    .clicked()
+                {
+                    if summary {
+                        self.settings.muted = notification::is_muted();
+                        self.record_progress();
+                        self.recorded_sessions = 0;
+                        self.recorded_seconds = 0;
+                        self.timer = App::new_waiting(self.settings.clone());
+                    } else {
+                        if startup {
+                            self.settings.muted = notification::is_muted();
+                            self.timer.configure(self.settings.clone());
+                        }
+                        self.timer.handle_action(KeyAction::Confirm);
+                    }
+                }
+                if !startup && !summary && !self.experience.focus_view {
+                    let labels = ["Skip", "Restart phase", "End session"];
+                    let font = egui::TextStyle::Button.resolve(ui.style());
+                    let widths = labels.map(|label| {
+                        ui.painter()
+                            .layout_no_wrap(label.into(), font.clone(), self.appearance.ink())
+                            .size()
+                            .x
+                            + ui.spacing().button_padding.x * 2.0
+                    });
+                    let row_width = widths.iter().sum::<f32>() + ui.spacing().item_spacing.x * 2.0;
+                    let inset = ((ui.available_width() - row_width) * 0.5).max(0.0);
+                    ui.horizontal(|ui| {
+                        ui.add_space(inset);
+                        let soft = |label: &'static str| {
+                            egui::Button::new(label)
+                                .fill(self.appearance.track())
+                                .stroke(Stroke::NONE)
+                                .corner_radius(19.0)
+                        };
+                        if ui.add_sized([widths[0], 38.0], soft(labels[0])).clicked() {
+                            self.timer.handle_action(KeyAction::Skip);
+                        }
+                        if ui.add_sized([widths[1], 38.0], soft(labels[1])).clicked() {
+                            self.timer.handle_action(KeyAction::Restart);
+                        }
+                        let end_label = if self.confirm_end {
+                            "Click again to end"
+                        } else {
+                            labels[2]
+                        };
+                        let end = egui::Button::new(RichText::new(end_label).color(
+                            if self.confirm_end {
+                                Color32::from_rgb(190, 60, 50)
+                            } else {
+                                self.appearance.quiet()
+                            },
+                        ))
+                        .fill(Color32::TRANSPARENT)
+                        .stroke(Stroke::NONE);
+                        if ui.add(end).clicked() {
+                            if self.confirm_end {
+                                self.confirm_end = false;
+                                self.timer.handle_action(KeyAction::Quit);
+                            } else {
+                                self.confirm_end = true;
+                            }
+                        }
+                    });
+                }
+                if let Some(message) = self.timer.transition_message() {
+                    ui.label(message);
+                }
+                ui.add_space(8.0);
+                // One pip per focus session: filled when done, outlined for the current one.
+                let total = self.timer.config().cycles as usize;
+                let done = self.timer.stats().work_completed as usize;
+                let (pips, _) = ui.allocate_exact_size(
+                    Vec2::new(total as f32 * 18.0 - 6.0, 12.0),
+                    egui::Sense::hover(),
+                );
+                for i in 0..total {
+                    let c = pips.left_center() + Vec2::new(6.0 + i as f32 * 18.0, 0.0);
+                    if i < done {
+                        ui.painter().circle_filled(c, 5.0, accent);
+                    } else if i == done && !summary {
+                        ui.painter().circle_stroke(c, 4.5, Stroke::new(2.0, accent));
+                    } else {
+                        ui.painter().circle_filled(c, 5.0, self.appearance.track());
+                    }
+                }
+                let mut line = format!("Session {} of {}", (done + 1).min(total), total);
+                if summary {
+                    line = format!(
                         "{} focus · {} break",
                         fmt_total_minutes(self.timer.stats().focus_secs),
                         fmt_total_minutes(self.timer.stats().break_secs)
-                    ))
-                    .size(14.0)
-                    .color(self.appearance.quiet()),
+                    );
+                }
+                ui.label(
+                    RichText::new(line)
+                        .size(14.0)
+                        .color(self.appearance.quiet()),
                 );
-            }
+            });
         });
         if self.experience.focus_view {
             return;
         }
-        ui.add_space(8.0);
-        let settings_width = ui.available_width();
-        ui.horizontal(|ui| {
-            ui.add_space(settings_width * 0.05);
+        ui.add_space(12.0);
+        let settings_width = ui.available_width() - 40.0;
+        self.card_frame().show(ui, |ui| {
+            ui.set_width(ui.available_width());
             ui.allocate_ui_with_layout(
-                Vec2::new(settings_width * 0.9, 0.0),
+                Vec2::new(settings_width, 0.0),
                 egui::Layout::top_down(egui::Align::Min),
                 |ui| {
                     egui::CollapsingHeader::new("Session settings")
-                        .default_open(true)
+                        .default_open(false)
                         .show(ui, |ui| {
                             ui.spacing_mut().item_spacing.y = 4.0;
                             ui.style_mut()
@@ -366,7 +464,7 @@ impl Desktop {
                             egui::Grid::new("session_lengths")
                                 .num_columns(4)
                                 .min_col_width(if settings_width > 480.0 {
-                                    (settings_width * 0.9 - 36.0) / 4.0
+                                    (settings_width - 36.0) / 4.0
                                 } else {
                                     0.0
                                 })
@@ -412,6 +510,19 @@ impl Desktop {
         });
     }
 
+    fn card_frame(&self) -> egui::Frame {
+        egui::Frame::new()
+            .fill(self.appearance.paper())
+            .corner_radius(20.0)
+            .inner_margin(20.0)
+            .shadow(egui::Shadow {
+                offset: [0, 6],
+                blur: 24,
+                spread: 0,
+                color: Color32::from_black_alpha(if self.appearance.dark { 70 } else { 22 }),
+            })
+    }
+
     fn sound_panel(&mut self, ui: &mut egui::Ui) {
         let roomy = ui.available_width() > 700.0;
         let text_size = if roomy { 16.0 } else { 14.0 };
@@ -424,16 +535,23 @@ impl Desktop {
             .text_styles
             .insert(egui::TextStyle::Button, FontId::proportional(text_size));
         let audio_ready = self.audio.message().starts_with("Ready");
+        self.card_frame().show(ui, |ui| {
+        ui.set_width(ui.available_width());
         ui.label(RichText::new("Your soundscape").size(23.0));
         ui.label(
             RichText::new("Start with a preset. Make it your own.").color(self.appearance.quiet()),
         );
-        ui.add_space(4.0);
+        ui.add_space(6.0);
         ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = Vec2::new(6.0, 6.0);
             for (index, (name, _)) in PRESETS.iter().enumerate() {
-                if ui
-                    .selectable_label(self.sound.preset == Some(index), *name)
-                    .clicked()
+                if chip(
+                    ui,
+                    name,
+                    self.sound.preset == Some(index),
+                    &self.appearance,
+                )
+                .clicked()
                 {
                     self.sound.choose(index);
                     if self.preview.is_some() {
@@ -442,12 +560,13 @@ impl Desktop {
                 }
             }
         });
-        ui.add_space(8.0);
+        ui.add_space(10.0);
         egui::Frame::new()
-            .fill(self.appearance.paper())
-            .corner_radius(12.0)
-            .inner_margin(12.0)
+            .fill(self.appearance.track())
+            .corner_radius(14.0)
+            .inner_margin(14.0)
             .show(ui, |ui| {
+                ui.set_width(ui.available_width());
                 ui.horizontal_wrapped(|ui| {
                     if ui
                         .checkbox(&mut self.sound.enabled, "Soundscape on")
@@ -479,11 +598,14 @@ impl Desktop {
                         self.stop_preview();
                     }
                 });
-                ui.add(
-                    egui::Slider::new(&mut self.sound.master, 0.0..=1.0)
-                        .text("Master volume")
-                        .custom_formatter(percent),
-                );
+                ui.horizontal(|ui| {
+                    ui.add(
+                        egui::Slider::new(&mut self.sound.master, 0.0..=1.0)
+                            .show_value(false),
+                    );
+                    ui.label(RichText::new(percent_text(self.sound.master as f64)).strong());
+                    ui.label("Master volume");
+                });
                 ui.label(
                     RichText::new(if self.preview.is_some() {
                         "Previewing for 8 seconds"
@@ -498,25 +620,40 @@ impl Desktop {
                 ui.add_space(6.0);
                 ui.separator();
                 ui.spacing_mut().slider_width =
-                    (ui.available_width() - if roomy { 270.0 } else { 220.0 }).max(100.0);
+                    (ui.available_width() - if roomy { 290.0 } else { 240.0 }).max(100.0);
                 let row_spacing = (ui.ctx().content_rect().height() - 680.0).max(0.0) * 0.025 + 2.0;
                 egui::Grid::new("sound_layers")
-                    .num_columns(3)
+                    .num_columns(4)
                     .spacing([12.0, row_spacing.min(18.0)])
                     .min_row_height(22.0)
                     .show(ui, |ui| {
                         for index in 0..soundscape::COUNT {
-                            ui.label(RichText::new(NAMES[index]).strong())
-                                .on_hover_text(DESCRIPTIONS[index]);
+                            let label = RichText::new(NAMES[index]);
+                            let label = if self.sound.levels[index] > 0. {
+                                label.strong()
+                            } else {
+                                label.color(self.appearance.quiet())
+                            };
+                            ui.label(label).on_hover_text(DESCRIPTIONS[index]);
                             if ui
                                 .add(
                                     egui::Slider::new(&mut self.sound.levels[index], 0.0..=1.0)
-                                        .custom_formatter(percent),
+                                        .show_value(false),
                                 )
                                 .changed()
                             {
                                 self.sound.preset = None;
                             }
+                            let level = self.sound.levels[index];
+                            let text = RichText::new(percent_text(level as f64));
+                            ui.add_sized(
+                                [40.0, 20.0],
+                                egui::Label::new(if level > 0. {
+                                    text.strong()
+                                } else {
+                                    text.color(self.appearance.quiet())
+                                }),
+                            );
                             if ui
                                 .add_enabled(audio_ready, egui::Button::new("Preview").small())
                                 .on_hover_text("Listen to this layer for 8 seconds")
@@ -528,22 +665,94 @@ impl Desktop {
                         }
                     });
             });
+        ui.add_space(10.0);
+        egui::Frame::new()
+            .fill(self.appearance.track())
+            .corner_radius(14.0)
+            .inner_margin(14.0)
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.label(RichText::new("Your own audio").strong());
+                ui.label(
+                    RichText::new(
+                        "Paste a link to an MP3, OGG or WAV file, or drop a file here. \
+                         YouTube and Spotify links open in your browser.",
+                    )
+                    .size(13.0)
+                    .color(self.appearance.quiet()),
+                );
+                match self.sound.custom_source.clone() {
+                    None => {
+                        ui.horizontal(|ui| {
+                            let edit = ui.add(
+                                egui::TextEdit::singleline(&mut self.custom_input)
+                                    .hint_text("https://… or a file path")
+                                    .desired_width((ui.available_width() - 70.0).max(80.0)),
+                            );
+                            let enter = edit.lost_focus()
+                                && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                            if (ui.button("Add").clicked() || enter)
+                                && !self.custom_input.trim().is_empty()
+                            {
+                                let text = self.custom_input.clone();
+                                self.use_custom(&text);
+                            }
+                        });
+                    }
+                    Some(source) => {
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                RichText::new(crate::custom_audio::label(&source)).strong(),
+                            );
+                            if ui.small_button("Remove").clicked() {
+                                self.clear_custom();
+                            }
+                        });
+                        ui.horizontal(|ui| {
+                            ui.add(
+                                egui::Slider::new(&mut self.sound.custom_level, 0.0..=1.0)
+                                    .show_value(false),
+                            );
+                            ui.label(
+                                RichText::new(percent_text(self.sound.custom_level as f64))
+                                    .strong(),
+                            );
+                            ui.label("Volume");
+                        });
+                    }
+                }
+                let note = if self.custom_note.is_empty() {
+                    self.audio.custom_message()
+                } else {
+                    self.custom_note.clone()
+                };
+                if !note.is_empty() {
+                    ui.label(
+                        RichText::new(note)
+                            .size(13.0)
+                            .color(self.appearance.quiet()),
+                    );
+                }
+            });
         ui.add_space(8.0);
         ui.checkbox(
             &mut self.sound.during_breaks,
             "Continue soundscape during breaks",
         );
-        ui.label(
-            RichText::new("Alpha tones: use stereo headphones for the two separate tones.")
-                .size(12.0)
-                .color(self.appearance.quiet()),
-        );
-        let status = self.audio.message();
-        ui.label(
-            RichText::new(status)
-                .size(12.0)
-                .color(self.appearance.quiet()),
-        );
+        if self.sound.levels[7] > 0. {
+            ui.label(
+                RichText::new("Alpha tones: use stereo headphones for the two separate tones.")
+                    .size(13.0)
+                    .color(self.appearance.quiet()),
+            );
+        }
+        if !audio_ready {
+            ui.label(
+                RichText::new(self.audio.message())
+                    .size(13.0)
+                    .color(self.appearance.quiet()),
+            );
+        }
         if let Some(error) = &self.save_error {
             ui.colored_label(Color32::DARK_RED, error);
         }
@@ -554,6 +763,7 @@ impl Desktop {
             ui.hyperlink_to("Original rainforest recording", "https://commons.wikimedia.org/wiki/File:Jungle_Sound_Thailand_Phuket.flac");
             ui.hyperlink_to("CC BY-SA 3.0 license", "https://creativecommons.org/licenses/by-sa/3.0/");
             ui.label("Pink noise, brown noise and alpha tones are generated by this app.");
+        });
         });
     }
 
@@ -567,14 +777,11 @@ impl Desktop {
             notification::is_muted(),
         );
         self.shortcuts(&ctx);
-        let mut visuals = if self.appearance.dark {
-            egui::Visuals::dark()
-        } else {
-            egui::Visuals::light()
-        };
-        visuals.override_text_color = Some(self.appearance.ink());
-        visuals.widgets.active.bg_fill = BLUE;
-        visuals.selection.bg_fill = BLUE;
+        let dropped = ctx.input(|i| i.raw.dropped_files.iter().find_map(|f| f.path.clone()));
+        if let Some(path) = dropped {
+            self.use_custom(&path.to_string_lossy());
+        }
+        let visuals = self.appearance.visuals();
         *ui.visuals_mut() = visuals.clone();
         ctx.set_visuals(visuals);
         egui::Panel::bottom("session_footer")
@@ -612,32 +819,47 @@ impl Desktop {
                 self.appearance
                     .paint(ui.painter(), ui.max_rect().expand(16.0));
                 ui.horizontal_wrapped(|ui| {
-                    ui.spacing_mut().button_padding = Vec2::new(8.0, 8.0);
-                    ui.label(RichText::new("Pomodoro").size(24.0).strong());
+                    ui.label(RichText::new("Pomodoro").size(26.0).strong());
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui
-                            .button(if self.experience.focus_view {
+                        ui.spacing_mut().item_spacing.x = 8.0;
+                        // Right-to-left: view toggle, then personalisation, then the bell.
+                        if chip(
+                            ui,
+                            if self.experience.focus_view {
                                 "Show everything"
                             } else {
                                 "Focus view"
-                            })
-                            .clicked()
+                            },
+                            self.experience.focus_view,
+                            &self.appearance,
+                        )
+                        .clicked()
                         {
                             self.experience.focus_view = !self.experience.focus_view;
                         }
-                        if !self.experience.focus_view && ui.button("Atmospheres").clicked() {
-                            self.atmospheres_open = !self.atmospheres_open;
+                        if !self.experience.focus_view {
+                            ui.add_space(8.0);
+                            if chip(ui, "Appearance", self.appearance_open, &self.appearance)
+                                .clicked()
+                            {
+                                self.appearance_open = !self.appearance_open;
+                            }
+                            if chip(ui, "Atmospheres", self.atmospheres_open, &self.appearance)
+                                .clicked()
+                            {
+                                self.atmospheres_open = !self.atmospheres_open;
+                            }
+                            ui.add_space(8.0);
                         }
-                        if !self.experience.focus_view && ui.button("Appearance").clicked() {
-                            self.appearance_open = !self.appearance_open;
-                        }
-                        if ui
-                            .button(if notification::is_muted() {
-                                "Bell off"
-                            } else {
-                                "Bell on"
-                            })
-                            .clicked()
+                        let bell = !notification::is_muted();
+                        if chip(
+                            ui,
+                            if bell { "Bell on" } else { "Bell off" },
+                            bell,
+                            &self.appearance,
+                        )
+                        .on_hover_text("Play a bell when a phase ends (M)")
+                        .clicked()
                         {
                             notification::toggle_muted();
                         }
@@ -720,6 +942,7 @@ impl Desktop {
         }
     }
     fn sync_audio(&mut self) {
+        self.sync_custom();
         if self
             .preview
             .is_some_and(|(_, deadline)| Instant::now() >= deadline)
@@ -753,6 +976,12 @@ impl Desktop {
             self.fade_started = now;
         }
         self.audio.update(current);
+        let custom = match self.preview {
+            Some((Some(_), _)) => 0.,
+            Some((None, _)) => self.sound.custom_level * self.sound.master,
+            None => self.sound.custom_gain(active),
+        };
+        self.audio.set_custom_gain(custom);
     }
     fn record_progress(&mut self) {
         let stats = self.timer.stats();
@@ -779,19 +1008,30 @@ impl Desktop {
                     .show(ui, |ui| {
                         for (index, atmosphere) in self.experience.atmospheres.iter().enumerate() {
                             ui.horizontal(|ui| {
-                                if ui.button(&atmosphere.name).clicked() {
-                                    self.appearance = atmosphere.appearance.clone();
-                                    self.sound = atmosphere.sound.clone();
-                                    self.preview = None;
-                                }
-                                if ui.small_button("Delete").clicked() {
-                                    remove = Some(index);
+                                if self.pending_delete == Some(index) {
+                                    ui.label(format!("Delete “{}”?", atmosphere.name));
+                                    if ui.small_button("Delete").clicked() {
+                                        remove = Some(index);
+                                    }
+                                    if ui.small_button("Keep").clicked() {
+                                        self.pending_delete = None;
+                                    }
+                                } else {
+                                    if ui.button(&atmosphere.name).clicked() {
+                                        self.appearance = atmosphere.appearance.clone();
+                                        self.sound = atmosphere.sound.clone();
+                                        self.preview = None;
+                                    }
+                                    if ui.small_button("Delete…").clicked() {
+                                        self.pending_delete = Some(index);
+                                    }
                                 }
                             });
                         }
                     });
                 if let Some(index) = remove {
                     self.experience.atmospheres.remove(index);
+                    self.pending_delete = None;
                 }
                 ui.separator();
                 ui.add(
@@ -895,8 +1135,37 @@ fn timer_side(width: f32, height: f32) -> f32 {
     (width * 0.7).min((height - 510.0).max(184.0))
 }
 
-fn percent(value: f64, _: std::ops::RangeInclusive<usize>) -> String {
+fn percent_text(value: f64) -> String {
     format!("{:.0}%", value * 100.0)
+}
+
+/// Rounded pill used for presets and header toggles.
+fn chip(
+    ui: &mut egui::Ui,
+    text: &str,
+    selected: bool,
+    appearance: &crate::appearance::Appearance,
+) -> egui::Response {
+    let font = egui::TextStyle::Button.resolve(ui.style());
+    let color = if selected {
+        Color32::WHITE
+    } else {
+        appearance.ink()
+    };
+    let galley = ui.painter().layout_no_wrap(text.into(), font, color);
+    let size = galley.size() + Vec2::new(26.0, 14.0);
+    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+    let fill = if selected {
+        appearance.accent(false)
+    } else if response.hovered() {
+        appearance.track().gamma_multiply(1.8)
+    } else {
+        appearance.track()
+    };
+    ui.painter().rect_filled(rect, size.y / 2.0, fill);
+    ui.painter()
+        .galley(rect.center() - galley.size() / 2.0, galley, color);
+    response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
 #[cfg(test)]

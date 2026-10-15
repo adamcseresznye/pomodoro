@@ -3,6 +3,7 @@
 mod app;
 mod appearance;
 mod config;
+mod custom_audio;
 mod event;
 mod experience;
 mod gui;
